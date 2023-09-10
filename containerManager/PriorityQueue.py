@@ -14,6 +14,12 @@ class PriorityQueue():
 	@staticmethod
 	def right(i: int) -> int:
 		return PriorityQueue.left(i) + 1
+	
+	def __len__(self):
+		return len(self.heap)
+	
+	def is_empty(self):
+		return len(self) == 0
 
 	def swap(self, i: int, j: int):
 		self.heap[i], self.heap[j] = self.heap[j], self.heap[i]
@@ -64,8 +70,10 @@ class PriorityQueue():
 
 	def pop(self):
 		self.swap(0, len(self.heap) - 1)
+		self.dict.pop(self.heap[-1][0])
 		self.heap.pop()
 		self.sink(0)
+
 
 	def top(self):
 		return self.heap[0][0]
