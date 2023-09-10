@@ -1,12 +1,22 @@
 from PriorityQueue import PriorityQueue
 import time
+import docker
 
 class dockerApi:
     def __init__(self):
-        pass
-    def createContainer():
-        print ("NAO SOU MOCK")
-        pass
+        self.client = docker.from_env()
+
+    def createContainer(self):
+        container = self.client.containers.run(
+            "ubuntu:latest",  # Specify the Docker image to use
+            command="/bin/bash",  # Specify the command to run in the container
+            detach=True,  # Run the container in detached mode
+            tty=True,  # Allocate a pseudo-TTY
+        )
+        print (container)
+        print(f"Container ID: {container.id}")
+        return container.id
+
     def deleteContainer(container_id):
         pass
 
@@ -37,5 +47,9 @@ class containerManager:
             self.user_id_to_container_id.pop(user_id)
             self.docker_api.deleteContainer(container_id)
         
+def main():
+    docker = dockerApi()
+    print (docker.createContainer ())
 
-
+if __name__ == "__main__":
+    main()
