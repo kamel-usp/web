@@ -1,8 +1,5 @@
 # dPasp Playground -- Editor
-
-```
-## Install
-
+### Install
 ```bash
 pnpm i
 pnpm dev
