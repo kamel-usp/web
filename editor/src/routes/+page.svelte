@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { SplitPane } from '@rich_harris/svelte-split-pane';
 	import CodeMirror from "svelte-codemirror-editor";
-	import { javascript } from "@codemirror/lang-javascript";
+	import { python } from "@codemirror/lang-python";
 	import { oneDark } from "@codemirror/theme-one-dark";
 	import { Button } from 'flowbite-svelte';
 	import Toolbar from "$lib/ui/Toolbar.svelte";
@@ -12,7 +12,7 @@
 <div class="main-container">
 	<SplitPane type="horizontal" min="100px" pos="70%" --thickness={dividerThickness}>
 		<section slot="a" id="codeMirror">
-			<CodeMirror bind:value lang={javascript()} theme={oneDark}/>
+			<CodeMirror bind:value lang={python()} theme={oneDark}/>
 			<!-- <SplitPane type="vertical" pos="10%">
 				<section slot="a">
 					<Toolbar/>
