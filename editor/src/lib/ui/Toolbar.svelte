@@ -1,12 +1,18 @@
-<script lang="ts">
-	import { Button } from 'flowbite-svelte';
+<script>
+  import { HomeOutline, EnvelopeOutline } from 'flowbite-svelte-icons';
+  import { Textarea, Toolbar, ToolbarGroup, ToolbarButton, Button } from 'flowbite-svelte';
+  import { PlayOutline } from 'flowbite-svelte-icons';
 </script>
 
-<div class="flex flex-wrap gap-2">
-  <!-- <Button outline>Default</Button> -->
-  <!-- <Button outline color="dark">Dark</Button> -->
-  <Button outline color="green">Submit</Button>
-  <!-- <Button outline color="red">Red</Button> -->
-  <!-- <Button outline color="yellow">Yellow</Button> -->
-  <!-- <Button outline color="purple">Purple</Button> -->
-</div>
+<Toolbar>
+<!--   <ToolbarGroup>
+    <ToolbarButton name="Attach file"><PaperClipOutline class="w-5 h-5 rotate-45" /></ToolbarButton>
+    <ToolbarButton name="Embed map"><MapPinAltSolid class="w-5 h-5" /></ToolbarButton>
+    <ToolbarButton name="Upload image"><ImageOutline class="w-5 h-5" /></ToolbarButton>
+  </ToolbarGroup>
+  <ToolbarGroup>
+    <ToolbarButton name="Format code"><PlayOutline class="w-5 h-5" /></ToolbarButton>
+    <ToolbarButton name="Add emoji"><FaceGrinOutline class="w-5 h-5" /></ToolbarButton>
+  </ToolbarGroup> -->
+  <ToolbarButton name="send" slot="end" color="green" size="xs"><PlayOutline class="w-5 h-5" /></ToolbarButton>
+</Toolbar>

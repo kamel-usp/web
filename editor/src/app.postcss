@@ -1,4 +1,32 @@
 /* Write your global styles here, in PostCSS syntax */
 @tailwind base;
-/* @tailwind components; */
+@tailwind components;
 @tailwind utilities;
+
+body {
+	background-color: #2e2e2e;
+}
+
+#console {
+	background-color: #1a1a1a; 
+}
+#output {
+	background-color: #2e2e2e; 
+}
+
+/* Impede margem no topo da aba */
+.mt-4 {
+	margin-top: 0px;
+	padding-left: 0px;
+	padding-right: 0px;
+	padding-top: 0px;
+	padding-bottom: 0px;
+}
+/* Impede rounding dos tabs */
+.rounded-lg {
+  border-radius: 0px;
+}
+/* Impede um espaço em branco na direita */
+.container {
+	max-width: none !important;
+}
