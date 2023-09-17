@@ -68,3 +68,5 @@ typings/
 
 # .vscode
 .vscode/
+
+**/__pycache__
