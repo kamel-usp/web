@@ -3,11 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import sys
 
-
+# docker build -t dpasp-runner .
+# docker run -p 127.0.0.1:8000:8000 -t dpasp-runner
 app = FastAPI()
 
 origins = [
-    "http://localhost:5173",
+    "*",
 ]
 
 app.add_middleware(
