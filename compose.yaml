@@ -1,0 +1,28 @@
+services:
+  container-manager:
+    build:
+      context: backend
+      dockerfile: Dockerfile
+    networks:
+      - cm
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /usr/bin/docker:/usr/bin/docker
+      - /usr/lib/libdevmapper.so.1.02:/usr/lib/libdevmapper.so.1.02
+
+  frontend:
+    build:
+      context: ./editor
+      dockerfile: Dockerfile
+      target: production
+    networks:
+      - cm
+      - dpasp-instances
+    ports:
+      - 8000:80
+
+networks:
+  cm:
+    driver: bridge
+  dpasp-instances:
+    driver: bridge
