@@ -6,6 +6,7 @@ import sys
 # docker run -p 127.0.0.1:8000:8000 -t dpasp-runner
 app = FastAPI()
 
+
 class ListStream:
     def __init__(self):
         self.data = []
@@ -27,10 +28,15 @@ def run_code(code_input: CodeInput):
     code = code_input.code
 
     sys.stdout = new_stdout = ListStream()
+    sys.stderr = new_stdout
 
-    exec(code)
+    try:
+        exec(code)
+    except Exception as e:
+        print(e)
 
     sys.stdout = sys.__stdout__
+    sys.stderr = sys.__stderr__
 
     result = new_stdout.flush()
     print(result)
