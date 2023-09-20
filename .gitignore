@@ -70,3 +70,6 @@ typings/
 .vscode/
 
 **/__pycache__
+
+# dPasp project
+auth_config.js

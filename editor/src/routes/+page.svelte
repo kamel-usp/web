@@ -11,6 +11,7 @@
 	import Status from "$lib/ui/Status.svelte";
 	import Terminal from "$lib/ui/Terminal.svelte";
 	import { editor } from "$lib/stores/editor";
+
 	const dividerThickness = "20px";
 </script>
 
