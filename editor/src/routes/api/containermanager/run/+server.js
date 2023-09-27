@@ -12,7 +12,7 @@ export async function POST({ request, cookies }) {
 
 	try {
 		const cm_response = await fetch(
-			"http://container-manager/container_for_user/10"
+			`http://container-manager/container_for_user/10`
 		)
 
 		if (!cm_response.ok) {

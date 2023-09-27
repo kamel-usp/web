@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
     networks:
       - cm
+    ports:
+      - 8001:80
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /usr/bin/docker:/usr/bin/docker
@@ -14,12 +16,14 @@ services:
     build:
       context: ./editor
       dockerfile: Dockerfile
-      target: production
+      target: dev
     networks:
       - cm
       - dpasp-instances
     ports:
       - 8000:80
+    volumes:
+      - ./editor:/app
 
 networks:
   cm:
