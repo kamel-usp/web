@@ -32,6 +32,7 @@
     "@codemirror/theme-one-dark": "^6.1.2",
     "@rich_harris/svelte-split-pane": "^1.1.1",
     "flowbite-svelte-icons": "^0.4.4",
+    "google-auth-library": "^9.0.0",
     "svelte-codemirror-editor": "^1.1.0",
     "svelte-themes": "^1.0.10"
   }
