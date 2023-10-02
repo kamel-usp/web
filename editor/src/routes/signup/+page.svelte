@@ -1,5 +1,22 @@
-<script>
+<script lang="ts">
     export let form;
+    import { SplitPane } from "@rich_harris/svelte-split-pane";
+    import CodeMirror from "svelte-codemirror-editor";
+    import { python } from "@codemirror/lang-python";
+    import { oneDark } from "@codemirror/theme-one-dark";
+    import { Button } from "flowbite-svelte";
+    import { Tabs, TabItem } from "flowbite-svelte";
+    import { ArrowRightOutline } from "flowbite-svelte-icons";
+
+    import Toolbar from "$lib/ui/Toolbar.svelte";
+    import Status from "$lib/ui/Status.svelte";
+    import Terminal from "$lib/ui/Terminal.svelte";
+    import { editor } from "$lib/stores/editor";
+
+    import { signIn, signOut } from "@auth/sveltekit/client";
+    import { page } from "$app/stores";
+
+    const dividerThickness = "20px";
 </script>
 
 <div class="sign-in-wrapper">
@@ -18,6 +35,25 @@
         </form>
     </div>
 </div>
+<h1>SvelteKit Auth Example</h1>
+<p>
+    {#if $page.data.session}
+        {#if $page.data.session.user?.image}
+            <span
+                style="background-image: url('{$page.data.session.user.image}')"
+                class="avatar"
+            />
+        {/if}
+        <span class="signedInText">
+            <small>Signed in as</small><br />
+            <strong>{$page.data.session.user?.name ?? "User"}</strong>
+        </span>
+        <button on:click={() => signOut()} class="button">Sign out</button>
+    {:else}
+        <span class="notSignedInText">You are not signed in</span>
+        <button on:click={() => signIn("github")}>Sign In with GitHub</button>
+    {/if}
+</p>
 
 <style>
     div {

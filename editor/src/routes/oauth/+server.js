@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import { OAuth2Client } from 'google-auth-library';
-
+import { session } from '@sveltestack/svelte-session';
 
 import {GOOGLE_ID,GOOGLE_SECRET} from '$env/static/private';
 
@@ -33,12 +33,13 @@ export const GET = async ({ url}) => {
         console.info('Tokens acquired.');
         const user = oAuth2Client.credentials;
         console.log('credentials',user);
-
+        
+        session.set({user});
+        
         await getUserData(user.access_token);
-        throw redirect(303, '/protected');
       } catch (err) {
         console.log('Error logging in with OAuth2 user', err);
-        throw redirect(303, '/protected');
     }
 
+    throw redirect(303, '/');
 };
