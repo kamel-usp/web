@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import { OAuth2Client } from 'google-auth-library';
-import { session } from '@sveltestack/svelte-session';
+import { session } from '@sveltejs/kit/node';
 
 import {GOOGLE_ID,GOOGLE_SECRET} from '$env/static/private';
 
@@ -35,6 +35,13 @@ export const GET = async ({ url}) => {
         console.log('credentials',user);
         
         session.set({user});
+        // const sessionObj = session.get(event?.locals);
+        // sessionObj.user = {
+        //   id: 123,
+        //   username: 'exampleuser',
+        // };
+        // session.set(event?.locals, sessionObj);
+      
         
         await getUserData(user.access_token);
       } catch (err) {

@@ -11,5 +11,6 @@ import { GITHUB_ID, GITHUB_SECRET, GOOGLE_ID, GOOGLE_SECRET } from "$env/static/
 //   return response;
 // };
 export const handle = SvelteKitAuth({
-  providers: [GoogleProvider({ clientId: GOOGLE_ID, clientSecret: GOOGLE_SECRET })]
+  providers: [GitHub({ clientId: GITHUB_ID, clientSecret: GITHUB_SECRET }), 
+              GoogleProvider({ clientId: GOOGLE_ID, clientSecret: GOOGLE_SECRET })]
  });
