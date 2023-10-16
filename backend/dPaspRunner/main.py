@@ -1,10 +1,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 import pasp
-import sys
 
-# docker build -t dpasp-runner .
-# docker run -p 127.0.0.1:8000:8000 -t dpasp-runner
 app = FastAPI()
 
 class ListStream:
@@ -35,6 +32,5 @@ def run_code(code_input: CodeInput):
         print(e, file=out)
 
     result = out.flush()
-    print(result, flush=True)
 
     return {"result": result}

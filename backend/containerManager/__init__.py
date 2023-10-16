@@ -2,6 +2,7 @@ from .PriorityQueue import PriorityQueue
 import time
 import docker
 from collections import deque
+import asyncio
 
 
 class dockerApi:
@@ -16,12 +17,12 @@ class dockerApi:
         print("Done building image!", flush=True)
 
     def createContainer(self):
-        print("Spawning a container")
+        print("Spawning a container", flush=True)
         container = self.client.containers.run(
             "dpasp-runner",  # Specify the Docker image to use
             detach=True,  # Run the container in detached mode
         )
-        print("A container was spawned")
+        print("A container was spawned", flush=True)
         net = self.client.networks.list(names="dpasp-instances")[0]
         net.connect(container, aliases=[f"dpasp-instance-{container.short_id}"])
         print(f"Created container with ID: {container.short_id}")
@@ -33,7 +34,7 @@ class dockerApi:
 
 
 class containerManager:
-    def __init__(self, lifetime, pre_allocate=1, docker_api=dockerApi()):
+    def __init__(self, lifetime, pre_allocate=2, docker_api=dockerApi()):
         self.docker_api = docker_api
         self.container_lifetime = lifetime
         self.lifetime_pq = PriorityQueue()
@@ -42,17 +43,23 @@ class containerManager:
         self.docker_api.build_image();
 
         self.pre_allocated_containers = deque()
-        for i in range(pre_allocate):
-            self.pre_allocated_containers.append(self.docker_api.createContainer())
+        asyncio.create_task(self.allocContainers(pre_allocate))
 
     def activeContainerCount(self):
         return len(self.user_id_to_container_id)
 
-    def getContainer(self, user_id):
+    async def allocContainers(self, count):
+        list_of_awaitables = []
+        for _ in range(count):
+            list_of_awaitables.append(asyncio.to_thread(self.docker_api.createContainer))
+        awaitable_list = asyncio.gather(*list_of_awaitables)
+        self.pre_allocated_containers.extend(await awaitable_list)
+
+    async def getContainer(self, user_id):
         if self.user_id_to_container_id.get(user_id) != None:
             return self.user_id_to_container_id[user_id]
         else:
-            self.pre_allocated_containers.append(self.docker_api.createContainer())
+            asyncio.create_task(self.allocContainers(1))
             container_id = self.pre_allocated_containers.popleft()
             self.user_id_to_container_id[user_id] = container_id
 
