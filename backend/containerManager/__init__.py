@@ -7,18 +7,21 @@ from collections import deque
 class dockerApi:
     def __init__(self):
         self.client = docker.from_env()
-        self.assert_image_is_built()
 
-    def assert_image_is_built(self):
+    def build_image(self):
+        print("Building image", flush=True)
         self.image_id = self.client.images.build(
             path="./dPaspRunner", tag="dpasp-runner"
         )
+        print("Done building image!", flush=True)
 
     def createContainer(self):
+        print("Spawning a container")
         container = self.client.containers.run(
             "dpasp-runner",  # Specify the Docker image to use
             detach=True,  # Run the container in detached mode
         )
+        print("A container was spawned")
         net = self.client.networks.list(names="dpasp-instances")[0]
         net.connect(container, aliases=[f"dpasp-instance-{container.short_id}"])
         print(f"Created container with ID: {container.short_id}")
@@ -35,6 +38,8 @@ class containerManager:
         self.container_lifetime = lifetime
         self.lifetime_pq = PriorityQueue()
         self.user_id_to_container_id = dict()
+
+        self.docker_api.build_image();
 
         self.pre_allocated_containers = deque()
         for i in range(pre_allocate):

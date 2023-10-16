@@ -4,13 +4,14 @@ from containerManager import containerManager
 
 day = 60 * 60 * 24
 
-cm = containerManager(2 * day)
-
+global cm
+cm = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global cm
     # startup code
-    cm.docker_api.assert_image_is_built()
+    cm = containerManager(2 * day)
     yield
     # shutdown code
     cm.stopAllContainers()
@@ -18,9 +19,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-
 @app.get("/container_for_user/{user_id}")
 def get_container_for_user(user_id: int):
+    global cm
     print(f"Requesting container for user_id: {user_id}")
     id = cm.getContainer(user_id)
     return {"id": id}

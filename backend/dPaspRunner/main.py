@@ -1,11 +1,11 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
+import pasp
 import sys
 
 # docker build -t dpasp-runner .
 # docker run -p 127.0.0.1:8000:8000 -t dpasp-runner
 app = FastAPI()
-
 
 class ListStream:
     def __init__(self):
@@ -27,18 +27,14 @@ class CodeInput(BaseModel):
 def run_code(code_input: CodeInput):
     code = code_input.code
 
-    sys.stdout = new_stdout = ListStream()
-    sys.stderr = new_stdout
-
+    out = ListStream()
     try:
-        exec(code)
+        P = pasp.parse(code, from_str=True)
+        print(pasp.exact(P), file=out)
     except Exception as e:
-        print(e)
+        print(e, file=out)
 
-    sys.stdout = sys.__stdout__
-    sys.stderr = sys.__stderr__
-
-    result = new_stdout.flush()
-    print(result)
+    result = out.flush()
+    print(result, flush=True)
 
     return {"result": result}

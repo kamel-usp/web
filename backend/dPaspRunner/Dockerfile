@@ -1,10 +1,11 @@
-FROM ubuntu:focal as dpasp-base
+FROM ubuntu:jammy as dpasp-base
 
 WORKDIR /app
 
 # Add needed ppa repositories
 
 RUN apt update
+RUN apt upgrade -y
 RUN apt install -y software-properties-common python3-launchpadlib
 RUN add-apt-repository ppa:deadsnakes/ppa
 RUN add-apt-repository ppa:potassco/stable
@@ -22,14 +23,14 @@ RUN apt install -y clingo libclingo-dev libncurses-dev build-essential
 
 # Install dpasp
 
-RUN python3.10 -m pip install --no-cache-dir pasp-plp
+RUN python3.10 -m pip install --no-cache-dir pasp-plp torch
 
 FROM dpasp-base
 
 # Install other dependencies
 COPY requirements.txt ./
 
-RUN python3.10 -m pip install --no-cache-dir -r requirements.txt
+RUN python3.10 -m pip install --no-cache-dir -r requirements.txt --extra-index-url=http://conda.anaconda.org/potassco
 
 COPY . .
 
