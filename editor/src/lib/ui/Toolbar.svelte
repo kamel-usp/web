@@ -20,9 +20,12 @@
 	async function submit() {
 		submitting = true;
 		const code = get(editor);
+		const sem = semantic_options["Semantics"][selected_semantics["Semantics"]]
+		const psem = semantic_options["PSemantics"][selected_semantics["PSemantics"]]
+		console.log(JSON.stringify({ sem, psem, code }))
 		const response = await fetch("/api/containermanager/run", {
 			method: "POST",
-			body: JSON.stringify({ code }),
+			body: JSON.stringify({ sem, psem, code }),
 			headers: {
 				"content-type": "application/json",
 			},
@@ -33,7 +36,7 @@
 		submitting = false;
 	}
 
-	let semantic_options = {
+	const semantic_options = {
 		 "Semantics": [
 			"stable",
 			"partial",

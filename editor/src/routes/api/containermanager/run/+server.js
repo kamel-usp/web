@@ -6,7 +6,7 @@ function delay(time) {
 
 /** @type {import('./$types').RequestHandler} */
 export async function POST({ request, cookies }) {
-	const { code } = await request.json();
+	const body = await request.text();
 
 	// return json({ code });
 
@@ -27,7 +27,7 @@ export async function POST({ request, cookies }) {
 		  `http://dpasp-instance-${container_id}/run`,
 		  {
 			method: "POST",
-			body: JSON.stringify({ code }),
+			body: body,
 			headers: {
 			  "Content-Type": "application/json", // Use "Content-Type" with a capital 'C'
 			},
