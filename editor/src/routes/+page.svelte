@@ -16,6 +16,8 @@
 	import { page } from "$app/stores";
 
 	const dividerThickness = "20px";
+
+	console.log($page.data?.session?.user)
 </script>
 
 <SplitPane
@@ -59,20 +61,14 @@
 		<span class="signedInText">
 			<small>Signed in as</small><br />
 			<strong>{$page.data.session.user?.name ?? "User"}</strong>
+			<strong>{$page.data.session.user?.email ?? "Email"}</strong>
 		</span>
 		<button on:click={() => signOut()} class="button">Sign out</button>
 	{:else}
 		<span class="notSignedInText">You are not signed in</span>
-		<button on:click={() => signIn("github")}>Sign In with GitHub</button>
+		<a href="/auth/signin" data-sveltekit-preload-data="off">Sign In</a>
 	{/if}
 </p>
-
-<h1>Public</h1>
-<a href="/signup">Login do Google</a>
-
-<h1>Public</h1>
-<a href="/protected">protected route</a>
-
 <style>
 	#codeMirror {
 		background-color: #242424;
