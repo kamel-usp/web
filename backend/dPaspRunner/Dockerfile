@@ -30,7 +30,7 @@ FROM dpasp-base
 # Install other dependencies
 COPY requirements.txt ./
 
-RUN python3.10 -m pip install --no-cache-dir -r requirements.txt --extra-index-url=http://conda.anaconda.org/potassco
+RUN python3.10 -m pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 

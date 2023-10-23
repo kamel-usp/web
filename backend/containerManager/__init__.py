@@ -11,9 +11,16 @@ class dockerApi:
 
     def build_image(self):
         print("Building image", flush=True)
-        self.image_id = self.client.images.build(
-            path="./dPaspRunner", tag="dpasp-runner"
+        result = self.image_id = self.client.images.build(
+            path="./dPaspRunner", tag="dpasp-runner", quiet=False
         )
+        for item in result[1]:
+            for key, value in item.items():
+                if key == "stream":
+                    print("[docker builder]", value, flush=True)
+                else:
+                    print("[docker builder]", key, ":", value, flush=True)
+
         print("Done building image!", flush=True)
 
     def createContainer(self):
