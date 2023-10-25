@@ -16,18 +16,22 @@ class ListStream:
         return str1
 
 
-class CodeInput(BaseModel):
+class RunRequest(BaseModel):
+    sem: str = "stable"
+    psem: str = "credal"
     code: str
 
 
 @app.post("/run")
-def run_code(code_input: CodeInput):
-    code = code_input.code
+def run_code(run_req: RunRequest):
+    sem = run_req.sem
+    psem = run_req.psem
+    code = run_req.code
 
     out = ListStream()
     try:
-        P = pasp.parse(code, from_str=True)
-        print(pasp.exact(P), file=out)
+        P = pasp.parse(code, from_str=True, semantics=sem)
+        print(pasp.exact(P, psemantics=psem), file=out)
     except Exception as e:
         print(e, file=out)
 

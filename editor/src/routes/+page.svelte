@@ -28,6 +28,7 @@
 				<div id="codeMirror">
 					<CodeMirror
 						bind:value={$editor}
+						placeholder="# Add your dPasp Code"
 						lang={python()}
 						theme={oneDark}
 					/>
