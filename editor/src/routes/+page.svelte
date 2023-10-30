@@ -11,6 +11,8 @@
 	import Status from "$lib/ui/Status.svelte";
 	import Terminal from "$lib/ui/Terminal.svelte";
 	import { editorDpasp, editorPython } from "$lib/stores/editor";
+
+	const pageSize = "94vh";
 </script>
 
 <div class="page-container">
@@ -56,6 +58,6 @@
 	.page-container {
 		display: flex;
 		flex-direction: column;
-		height: 100vh;
+    	height: 94vh; /* 100vh - navBarSize */
 	}
 </style>
