@@ -23,7 +23,8 @@ RUN apt install -y clingo libclingo-dev libncurses-dev build-essential
 
 # Install dpasp
 
-RUN python3.10 -m pip install --no-cache-dir pasp-plp torch
+RUN python3.10 -m pip install --no-cache-dir torch
+RUN python3.10 -m pip install --no-cache-dir pasp-plp && python3.10 -m pip --version
 
 FROM dpasp-base
 
