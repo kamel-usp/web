@@ -14,7 +14,6 @@
 
 	const pageSize = "94vh";
 </script>
-
 <div class="page-container">
 	<Tabs>
 		<TabItem open>
@@ -46,7 +45,6 @@
 	</SplitPane>
 	<Toolbar />
 </div>
-
 <style>
 	#codeMirror {
 		background-color: #242424;
