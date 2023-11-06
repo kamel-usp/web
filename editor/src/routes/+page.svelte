@@ -10,44 +10,54 @@
 	import Toolbar from "$lib/ui/Toolbar.svelte";
 	import Status from "$lib/ui/Status.svelte";
 	import Terminal from "$lib/ui/Terminal.svelte";
-	import { editor } from "$lib/stores/editor";
+	import { editorDpasp, editorPython } from "$lib/stores/editor";
 
-	const dividerThickness = "20px";
+	const pageSize = "94vh";
 </script>
 
-<SplitPane
-	type="horizontal"
-	min="100px"
-	pos="70%"
-	--thickness={dividerThickness}
->
-	<section slot="a">
-		<Tabs>
-			<TabItem open>
-				<span slot="title">HelloWorld.dpasp</span>
-				<div id="codeMirror">
-					<CodeMirror
-						bind:value={$editor}
-						placeholder="# Add your dPasp Code"
-						lang={python()}
-						theme={oneDark}
-					/>
-				</div>
-			</TabItem>
-		</Tabs>
-		<Toolbar />
-	</section>
-	<section slot="b">
-		<SplitPane type="vertical">
-			<section slot="a" id="output"><Status /></section>
-			<section slot="b" id="console"><Terminal /></section>
-		</SplitPane>
-	</section>
-</SplitPane>
+<div class="page-container">
+	<Tabs>
+		<TabItem open>
+			<span slot="title">Dpasp</span>
+			<div id="codeMirror">
+				<CodeMirror
+					bind:value={$editorDpasp}
+					placeholder="# Add your dPasp Code teste"
+					lang={python()}
+					theme={oneDark}
+				/>
+			</div>
+		</TabItem>
+		<TabItem open>
+			<span slot="title">Python</span>
+			<div id="codeMirror">
+				<CodeMirror
+					bind:value={$editorPython}
+					placeholder="# Add your dPasp Code"
+					lang={python()}
+					theme={oneDark}
+				/>
+			</div>
+		</TabItem>
+	</Tabs>
+	<SplitPane type="horizontal" min="30%" max="70%" >
+		<section slot="a" id="console"><Terminal /></section>
+		<section slot="b" id="output"><Status /></section>
+	</SplitPane>
+	<Toolbar />
+</div>
 
 <style>
 	#codeMirror {
 		background-color: #242424;
-		min-height: 500px;
+		min-height: 55vh;
+		max-height: 55vh;
+		overflow: auto;
+		position: relative;
+	}
+	.page-container {
+		display: flex;
+		flex-direction: column;
+    	height: 94vh; /* 100vh - navBarSize */
 	}
 </style>

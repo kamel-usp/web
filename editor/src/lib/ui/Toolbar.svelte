@@ -8,7 +8,7 @@
 		Button,
 	} from "flowbite-svelte";
 	import { PlayOutline } from "flowbite-svelte-icons";
-	import { editor } from "$lib/stores/editor";
+	import { editorDpasp, editorPython } from "$lib/stores/editor";
 	import { get } from "svelte/store";
 	import { Spinner } from "flowbite-svelte";
 
@@ -19,7 +19,8 @@
 
 	async function submit() {
 		submitting = true;
-		const code = get(editor);
+		// TODO: send python code
+		const code = get(editorDpasp);
 		const sem = semantic_options["Semantics"][selected_semantics["Semantics"]]
 		const psem = semantic_options["PSemantics"][selected_semantics["PSemantics"]]
 		console.log(JSON.stringify({ sem, psem, code }))
