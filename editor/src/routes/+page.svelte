@@ -12,12 +12,7 @@
 	import Terminal from "$lib/ui/Terminal.svelte";
 	import { editor } from "$lib/stores/editor";
 
-	import { signIn, signOut } from "@auth/sveltekit/client";
-	import { page } from "$app/stores";
-
 	const dividerThickness = "20px";
-
-	console.log($page.data?.session?.user)
 </script>
 
 <SplitPane
@@ -48,27 +43,6 @@
 		</SplitPane>
 	</section>
 </SplitPane>
-
-<h1>SvelteKit Auth Example</h1>
-<p>
-	{#if $page.data.session}
-		{#if $page.data.session.user?.image}
-			<span
-				style="background-image: url('{$page.data.session.user.image}')"
-				class="avatar"
-			/>
-		{/if}
-		<span class="signedInText">
-			<small>Signed in as</small><br />
-			<strong>{$page.data.session.user?.name ?? "User"}</strong>
-			<strong>{$page.data.session.user?.email ?? "Email"}</strong>
-		</span>
-		<button on:click={() => signOut()} class="button">Sign out</button>
-	{:else}
-		<span class="notSignedInText">You are not signed in</span>
-		<a href="/auth/signin" data-sveltekit-preload-data="off">Sign In</a>
-	{/if}
-</p>
 <style>
 	#codeMirror {
 		background-color: #242424;

@@ -11,15 +11,20 @@
   import { editor } from "$lib/stores/editor";
   import { get } from "svelte/store";
   import { Spinner } from "flowbite-svelte";
+  import { page } from "$app/stores";
+  import { userID } from "$lib/stores/auth";
 
   let submitting = false;
-
+  
   async function submit() {
     submitting = true;
     const code = get(editor);
     const response = await fetch("/api/containermanager/run", {
       method: "POST",
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ 
+        'id': get(userID),
+        'code': code 
+      }),
       headers: {
         "content-type": "application/json",
       },

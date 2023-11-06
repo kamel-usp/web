@@ -6,13 +6,11 @@ function delay(time) {
 
 /** @type {import('./$types').RequestHandler} */
 export async function POST({ request, cookies }) {
-	const { code } = await request.json();
-
-	// return json({ code });
+	const { code, id } = await request.json();
 
 	try {
 		const cm_response = await fetch(
-			`http://container-manager/container_for_user/10`
+			`http://container-manager/container_for_user/${id}`
 		)
 
 		if (!cm_response.ok) {
