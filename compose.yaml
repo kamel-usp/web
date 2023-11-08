@@ -24,6 +24,8 @@ services:
       - 8000:80
     volumes:
       - ./editor:/app
+    env_file:
+      - ./editor/.env
 
 networks:
   cm:

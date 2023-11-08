@@ -8,6 +8,7 @@
 	} from "flowbite-svelte";
 	import { PlayOutline, ChevronDownSolid } from "flowbite-svelte-icons";
 	import { editorDpasp, editorPython } from "$lib/stores/editor";
+  import { userID } from "$lib/stores/auth";
 	import { get } from "svelte/store";
 	import { Spinner } from "flowbite-svelte";
 
@@ -22,10 +23,11 @@
 		const code = get(editorDpasp);
 		const sem = semantic_options["Semantics"][selected_semantics["Semantics"]]
 		const psem = semantic_options["PSemantics"][selected_semantics["PSemantics"]]
-		console.log(JSON.stringify({ sem, psem, code }))
+    const id = get(userID);
+		console.log(JSON.stringify({ sem, psem, code, id }))
 		const response = await fetch("/api/containermanager/run", {
 			method: "POST",
-			body: JSON.stringify({ sem, psem, code }),
+			body: JSON.stringify({ sem, psem, code, id }),
 			headers: {
 				"content-type": "application/json",
 			},
