@@ -1,13 +1,12 @@
 <script>
-	import { HomeOutline, EnvelopeOutline } from "flowbite-svelte-icons";
 	import {
-		Textarea,
 		Toolbar,
-		ToolbarGroup,
 		ToolbarButton,
 		Button,
+		Dropdown,
+		Radio,
 	} from "flowbite-svelte";
-	import { PlayOutline } from "flowbite-svelte-icons";
+	import { PlayOutline, ChevronDownSolid } from "flowbite-svelte-icons";
 	import { editorDpasp, editorPython } from "$lib/stores/editor";
 	import { get } from "svelte/store";
 	import { Spinner } from "flowbite-svelte";
@@ -55,24 +54,22 @@
 	}
 </script>
 
+
 <Toolbar>
-	<!--	 <ToolbarGroup>
-		<ToolbarButton name="Attach file"><PaperClipOutline class="w-5 h-5 rotate-45" /></ToolbarButton>
-		<ToolbarButton name="Embed map"><MapPinAltSolid class="w-5 h-5" /></ToolbarButton>
-		<ToolbarButton name="Upload image"><ImageOutline class="w-5 h-5" /></ToolbarButton>
-	</ToolbarGroup> -->
-	<ToolbarGroup>
-			{#each Object.entries(semantic_options) as [sem, types] }
-			<HoverMenu>
-				<span slot="toggle">{sem}: {types[selected_semantics[sem]]}</span>
+	<div class="flex-container">
+		{#each Object.entries(semantic_options) as [sem, types] }
+			<Button>
+				{sem}: {types[selected_semantics[sem]]}<ChevronDownSolid class="w-3 h-3 ml-2 text-white dark:text-white" />
+			</Button>
+			<Dropdown class="w-44 p-3 space-y-3 text-sm">
 				{#each types.keys() as sem_ind}
-					<HoverMenuItem>
-					<button class="sem_selector" on:click={() => selected_semantics[sem] = sem_ind}>{types[sem_ind]}</button>
-					</HoverMenuItem>
+					<li>
+						<Radio name={sem} on:click={() => {selected_semantics[sem] = sem_ind;}}>{types[sem_ind]}</Radio>
+					</li>
 				{/each}
-			</HoverMenu>
-			{/each}
-	</ToolbarGroup>
+			</Dropdown>
+		{/each}
+	</div>
 	<ToolbarButton name="send" slot="end" color="green" on:click={submit}>
 		{#if submitting == false}
 			<PlayOutline class="w-5 h-5" />
@@ -86,5 +83,9 @@
 	.sem_selector {
 		padding: 0.5rem 1rem;
 		width: 100%;
+	}
+	.flex-container {
+		display: flex;
+		gap: 20px;
 	}
 </style>

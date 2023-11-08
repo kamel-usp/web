@@ -22,7 +22,7 @@
 			<div id="codeMirror">
 				<CodeMirror
 					bind:value={$editorDpasp}
-					placeholder="# Add your dPasp Code teste"
+					placeholder="# Add your dPasp code"
 					lang={python()}
 					theme={oneDark}
 				/>
@@ -33,18 +33,18 @@
 			<div id="codeMirror">
 				<CodeMirror
 					bind:value={$editorPython}
-					placeholder="# Add your dPasp Code"
+					placeholder="# Add your python code"
 					lang={python()}
 					theme={oneDark}
 				/>
 			</div>
 		</TabItem>
 	</Tabs>
+	<Toolbar />
 	<SplitPane type="horizontal" min="30%" max="70%" >
 		<section slot="a" id="console"><Terminal /></section>
 		<section slot="b" id="output"><Status /></section>
 	</SplitPane>
-	<Toolbar />
 </div>
 
 <style>
