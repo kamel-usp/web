@@ -7,8 +7,8 @@
 		Radio,
 	} from "flowbite-svelte";
 	import { PlayOutline, ChevronDownSolid } from "flowbite-svelte-icons";
-	import { editorDpasp, editorPython } from "$lib/stores/editor";
-  import { userID } from "$lib/stores/auth";
+	import { editorDpasp, editorPython, editorTerminal } from "$lib/stores/editor";
+  	import { userID } from "$lib/stores/auth";
 	import { get } from "svelte/store";
 	import { Spinner } from "flowbite-svelte";
 
@@ -23,7 +23,8 @@
 		const code = get(editorDpasp);
 		const sem = semantic_options["Semantics"][selected_semantics["Semantics"]]
 		const psem = semantic_options["PSemantics"][selected_semantics["PSemantics"]]
-    const id = get(userID);
+    	const id = get(userID);
+		
 		console.log(JSON.stringify({ sem, psem, code, id }))
 		const response = await fetch("/api/containermanager/run", {
 			method: "POST",
@@ -33,8 +34,10 @@
 			},
 		});
 		console.log(response.status);
+
 		let res = await response.json();
-		console.log(res);
+		editorTerminal.set ("> " + (res.response_code == undefined ? "An error ocurred while processing your code." : res.response_code));
+		
 		submitting = false;
 	}
 
@@ -82,10 +85,6 @@
 </Toolbar>
 
 <style>
-	.sem_selector {
-		padding: 0.5rem 1rem;
-		width: 100%;
-	}
 	.flex-container {
 		display: flex;
 		gap: 20px;
