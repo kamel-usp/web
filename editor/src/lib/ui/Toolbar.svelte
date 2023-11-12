@@ -24,10 +24,10 @@
 		const sem = semantic_options["Semantics"][selected_semantics["Semantics"]]
 		const psem = semantic_options["PSemantics"][selected_semantics["PSemantics"]]
 		
-    	const id = get(userID);
+    	const user_id = get(userID);
 		const response = await fetch("/api/containermanager/run", {
 			method: "POST",
-			body: JSON.stringify({ sem, psem, code, id }),
+			body: JSON.stringify({ sem, psem, code, user_id }),
 			headers: {
 				"content-type": "application/json",
 			},

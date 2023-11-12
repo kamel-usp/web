@@ -2,6 +2,7 @@
   import { Modal, Dropzone, Button } from "flowbite-svelte";
   import { userID } from "$lib/stores/auth";
   import { get } from "svelte/store";
+  import { editorTerminal } from "$lib/stores/editor";
 
   const dropHandle = (event) => {
     value = [];
@@ -71,6 +72,7 @@
     });
     console.log (response.status);
     let res = await response.json ();
+    editorTerminal.set ("> " + (res.files == undefined ? "An error ocurred while listing files." : res.files));
     console.log (res);
   }
 
