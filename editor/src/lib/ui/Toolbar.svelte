@@ -63,7 +63,7 @@
 <Toolbar>
 	<div class="flex-container">
 		{#each Object.entries(semantic_options) as [sem, types] }
-			<Button>
+			<Button class="dark:bg-gray-900 text-primary-500 dark:hover:bg-gray-700">
 				{sem}: {types[selected_semantics[sem]]}<ChevronDownSolid class="w-3 h-3 ml-2 text-white dark:text-white" />
 			</Button>
 			<Dropdown class="w-44 p-3 space-y-3 text-sm">
@@ -88,5 +88,8 @@
 	.flex-container {
 		display: flex;
 		gap: 20px;
+	}
+	.button {
+		background-color: black;
 	}
 </style>
