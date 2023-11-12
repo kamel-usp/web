@@ -20,7 +20,7 @@ export async function POST({ request, cookies }) {
 
 		const container_id = (await cm_response.json()).id
 
-		console.log(container_id)
+		console.log("CONTAINER ID: ", container_id)
 
 		const response = await fetch(
 		  `http://dpasp-instance-${container_id}/run`,

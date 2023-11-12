@@ -32,10 +32,9 @@
 				"content-type": "application/json",
 			},
 		});
-		console.log(response.status);
 
 		let res = await response.json();
-		editorTerminal.set ("> " + (res.response == undefined ? "An error ocurred while processing your code." : res.response));
+		editorTerminal.set ("> " + (res.result == undefined ? "An error ocurred while processing your code." : res.result));
 		submitting = false;
 	}
 
