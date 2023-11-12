@@ -61,12 +61,27 @@
     console.log(res);
   }
 
+  async function listFiles() {
+    const response = await fetch("/api/instance/blob/list", {
+      method: "POST",
+      body: JSON.stringify({ }),
+      headers: {
+        "content-type": "application/json",
+      },
+    });
+    console.log (response.status);
+    let res = await response.json ();
+    console.log (res);
+  }
+
   let value = [];
   let fileList = [];
   let clickOutsideModal = false;
 </script>
 
 <Button on:click={() => (clickOutsideModal = true)}>File Browser</Button>
+<Button on:click={() => (listFiles ())}>List Files</Button>
+
 <Modal title="File upload" bind:open={clickOutsideModal} autoclose outsideclose>
   <Dropzone
     id="dropzone"

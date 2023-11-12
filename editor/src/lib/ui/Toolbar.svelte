@@ -34,7 +34,8 @@
 		});
 		console.log(response.status);
 		let res = await response.json();
-		console.log(res);
+		
+		console.log("RES: ", res);
 		submitting = false;
 	}
 
