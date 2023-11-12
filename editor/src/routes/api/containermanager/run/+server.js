@@ -6,9 +6,8 @@ function delay(time) {
 
 /** @type {import('./$types').RequestHandler} */
 export async function POST({ request, cookies }) {
-	// const body = await request.text();
-	const { code, id } = await request.json();
-	console.log(code, id);
+	const { code, sem, psem, id } = await request.json();
+	console.log(code, sem, psem)
 
 	try {
 		const cm_response = await fetch(
@@ -27,7 +26,7 @@ export async function POST({ request, cookies }) {
 		  `http://dpasp-instance-${container_id}/run`,
 		  {
 			method: "POST",
-			body: body,
+			body: JSON.stringify({ sem, psem, code }),
 			headers: {
 			  "Content-Type": "application/json", // Use "Content-Type" with a capital 'C'
 			},

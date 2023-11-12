@@ -46,18 +46,19 @@
   };
 
   async function uploadFile() {
-   const data = await fileList[0].text();
-   const id = get(userID);
-   const response = await fetch("/api/instance/blob_upload", {
-     method: "POST",
-     body: JSON.stringify({ data, id }),
-     headers: {
-       "content-type": "application/json",
-     },
-   });
-   console.log(response.status);
-   let res = await response.json();
-   console.log(res);
+    const filename = value[0];
+    const content = await fileList[0].text();
+    document.cookie = `user_id=${get(userID)}`;
+    const response = await fetch("/api/instance/blob/upload", {
+      method: "POST",
+      body: JSON.stringify({ filename, content }),
+      headers: {
+        "content-type": "application/json",
+      },
+    });
+    console.log(response.status);
+    let res = await response.json();
+    console.log(res);
   }
 
   let value = [];

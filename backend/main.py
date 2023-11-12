@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 @app.get("/container_for_user/{user_id}")
-async def get_container_for_user(user_id: int):
+async def get_container_for_user(user_id: str):
     global cm
     print(f"Requesting container for user_id: {user_id}")
     id = await cm.getContainer(user_id)

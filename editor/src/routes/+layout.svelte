@@ -8,7 +8,7 @@
 	import { userID } from "$lib/stores/auth";
 	import { get } from "svelte/store";
 	import { makeid, hashid } from "$lib/auth";
-	
+
 	const navBarSize = "6vh";
 
 	// https://stackoverflow.com/a/40031979/9014097
@@ -22,7 +22,7 @@
     	userID.set(buf2hex(id));
 	}
 	setSessionID();
-	
+
 </script>
 <Navbar let:hidden let:toggle style="background-color: #2e2e2e; color: #e6e6e6; height: {navBarSize}">
 	<NavBrand href="/">

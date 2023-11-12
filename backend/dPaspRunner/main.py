@@ -41,25 +41,30 @@ async def run_code(run_req: RunRequest):
     return {"result": result}
 
 
-blob_folder = "~/blobs/"
+blob_folder = "/blobs/"
 
-@app.post("/blob_upload")
-async def upload_blob(src: UploadFile):
-    chunk_size = 512
-    with open(f"{blob_folder}{src.filename}", "wb") as dest:
-        for chunk in iter(lambda: await src.read(chunk_size), b''):
-            dest.write(chunk)
+class FileToSave(BaseModel):
+    filename: str
+    content: str
+
+@app.post("/blob/upload")
+async def upload_blob(src: FileToSave):
+    with open(f"{blob_folder}{src.filename}", "w") as dest:
+        dest.write(src.content)
     return {"status": "ok"}
 
-@app.post("/blob_list")
+@app.post("/blob/list")
 async def list_blobs():
     return {"files" : os.listdir(blob_folder)}
 
-@app.post("/blob_delete")
-async def delete_blob(filename: str):
-    if os.remove(f"{blob_folder}{filename}"):
+class FileToDelete(BaseModel):
+    filename: str
+@app.post("/blob/delete")
+async def delete_blob(f: FileToDelete):
+    try:
+        os.remove(f"{blob_folder}{f.filename}")
         return {"status": "ok"}
-    else:
+    except:
         return {"status": "There is no file with this filename"}
 
 
