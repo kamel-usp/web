@@ -3,17 +3,18 @@
 	import CodeMirror from "svelte-codemirror-editor";
 	import { python } from "@codemirror/lang-python";
 	import { oneDark } from "@codemirror/theme-one-dark";
-	import { Button } from "flowbite-svelte";
-	import { Tabs, TabItem } from "flowbite-svelte";
+	import { Tabs, TabItem} from "flowbite-svelte";
 	import { ArrowRightOutline } from "flowbite-svelte-icons";
 
 	import Toolbar from "$lib/ui/Toolbar.svelte";
 	import Status from "$lib/ui/Status.svelte";
 	import Terminal from "$lib/ui/Terminal.svelte";
+	import FileBrowser from "$lib/ui/FileBrowser.svelte";
 	import { editorDpasp, editorPython } from "$lib/stores/editor";
 
 	const pageSize = "94vh";
 </script>
+
 <div class="page-container">
 	<Tabs>
 		<TabItem open>
@@ -45,6 +46,8 @@
 	</SplitPane>
 	<Toolbar />
 </div>
+<FileBrowser />
+
 <style>
 	#codeMirror {
 		background-color: #242424;
