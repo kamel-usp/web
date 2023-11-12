@@ -23,9 +23,8 @@
 		const code = get(editorDpasp);
 		const sem = semantic_options["Semantics"][selected_semantics["Semantics"]]
 		const psem = semantic_options["PSemantics"][selected_semantics["PSemantics"]]
-    	const id = get(userID);
 		
-		console.log(JSON.stringify({ sem, psem, code, id }))
+    	const id = get(userID);
 		const response = await fetch("/api/containermanager/run", {
 			method: "POST",
 			body: JSON.stringify({ sem, psem, code, id }),
@@ -36,8 +35,7 @@
 		console.log(response.status);
 
 		let res = await response.json();
-		editorTerminal.set ("> " + (res.response_code == undefined ? "An error ocurred while processing your code." : res.response_code));
-		
+		editorTerminal.set ("> " + (res.response == undefined ? "An error ocurred while processing your code." : res.response));
 		submitting = false;
 	}
 

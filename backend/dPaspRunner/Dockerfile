@@ -33,6 +33,8 @@ COPY requirements.txt ./
 
 RUN python3.10 -m pip install --no-cache-dir -r requirements.txt
 
+RUN mkdir /blobs
+
 COPY . .
 
 CMD [ "uvicorn", "--host", "0.0.0.0", "--port", "80", "main:app" ]

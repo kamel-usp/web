@@ -1,16 +1,17 @@
 <script>
 	import "../app.postcss";
 	import SvelteTheme from 'svelte-themes/SvelteTheme.svelte';
-	import { Navbar, NavBrand, NavLi, NavUl, NavHamburger } from 'flowbite-svelte';
+	import { Button, Navbar, NavBrand, NavLi, NavUl, NavHamburger } from 'flowbite-svelte';
     import { DarkMode } from 'flowbite-svelte';
     import { signIn, signOut } from "@auth/sveltekit/client";
 	import { page } from "$app/stores";
 	import { userID } from "$lib/stores/auth";
 	import { get } from "svelte/store";
 	import { makeid, hashid } from "$lib/auth";
-	
+
 	const navBarSize = "6vh";
-	// from: https://stackoverflow.com/a/40031979/9014097
+
+	// https://stackoverflow.com/a/40031979/9014097
 	function buf2hex(buffer) { // buffer is an ArrayBuffer
 	    return Array.prototype.map.call(new Uint8Array(buffer), x => ('00' + x.toString(16)).slice(-2)).join('');
 	}
@@ -21,7 +22,7 @@
     	userID.set(buf2hex(id));
 	}
 	setSessionID();
-	
+
 </script>
 <Navbar let:hidden let:toggle style="background-color: #2e2e2e; color: #e6e6e6; height: {navBarSize}">
 	<NavBrand href="/">
@@ -30,7 +31,6 @@
 	<NavHamburger on:click={toggle} />
 	<NavUl {hidden}>
 		<!-- <NavLi href="/about" style="color: #d4694a">Sign in</NavLi> -->
-		<NavLi style="color: #d4694a"><DarkMode /></NavLi>
 		{#if $page.data.session}
 		<!-- 			{#if $page.data.session.user?.image}
 				<span
