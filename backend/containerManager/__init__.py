@@ -3,6 +3,7 @@ import time
 import docker
 from collections import deque
 import asyncio
+import os
 
 
 class dockerApi:
@@ -10,9 +11,10 @@ class dockerApi:
         self.client = docker.from_env()
 
     def build_image(self):
-        print("Building image", flush=True)
+        print(f"Building image (selected target:)", flush=True)
+        print (os.getenv("RUNNER_TARGET"))
         try:
-            self.image_id = self.client.images.build(path="./dPaspRunner", tag="dpasp-runner", quiet=False)
+            self.image_id = self.client.images.build(path="./dPaspRunner", tag="dpasp-runner", quiet=False, target=os.getenv("RUNNER_TARGET"))
         except docker.errors.BuildError as e:
             for line in e.build_log:
                 if 'stream' in line:

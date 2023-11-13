@@ -1,8 +1,12 @@
 services:
-  container-manager:
+  container-manager: &cm
+    environment:
+      - RUNNER_TARGET=dpasp
     build:
       context: backend
       dockerfile: Dockerfile
+    profiles:
+      - dpasp
     networks:
       - cm
     ports:
@@ -11,6 +15,17 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /usr/bin/docker:/usr/bin/docker
       - /usr/lib/libdevmapper.so.1.02:/usr/lib/libdevmapper.so.1.02
+
+  container-manager-mock:
+    <<: *cm
+    profiles:
+      - mock
+    environment:
+      - RUNNER_TARGET=mock
+    networks:
+      cm:
+        aliases:
+          - container-manager
 
   frontend:
     build:

@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI, UploadFile
 from pydantic import BaseModel
-import pasp
+import dpasp_api
 
 app = FastAPI()
 
@@ -31,8 +31,7 @@ async def run_code(run_req: RunRequest):
 
     out = ListStream()
     try:
-        P = pasp.parse(code, from_str=True, semantics=sem)
-        print(pasp.exact(P, psemantics=psem), file=out)
+        print (dpasp_api.run_program(sem, psem, code), file=out)
     except Exception as e:
         print(e, file=out)
 

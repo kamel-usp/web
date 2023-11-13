@@ -1,4 +1,4 @@
-FROM ubuntu:jammy as dpasp-base
+FROM ubuntu:jammy AS base
 
 WORKDIR /app
 
@@ -17,16 +17,7 @@ RUN apt install -y curl
 RUN apt install -y python3.10-dev
 RUN curl https://bootstrap.pypa.io/get-pip.py | python3.10
 
-# Install dpasp dependencies
-
-RUN apt install -y clingo libclingo-dev libncurses-dev build-essential
-
-# Install dpasp
-
-RUN python3.10 -m pip install --no-cache-dir torch
-RUN python3.10 -m pip install --no-cache-dir pasp-plp && python3.10 -m pip --version
-
-FROM dpasp-base
+FROM base AS mock
 
 # Install other dependencies
 COPY requirements.txt ./
@@ -36,5 +27,30 @@ RUN python3.10 -m pip install --no-cache-dir -r requirements.txt
 RUN mkdir /blobs
 
 COPY . .
+
+CMD [ "uvicorn", "--host", "0.0.0.0", "--port", "80", "main:app" ]
+
+ENV MOCK=y
+
+FROM base AS dpasp
+# Install dpasp dependencies
+
+RUN apt install -y clingo libclingo-dev libncurses-dev build-essential
+
+# Install dpasp
+
+RUN python3.10 -m pip install --no-cache-dir torch
+RUN python3.10 -m pip install --no-cache-dir pasp-plp && python3.10 -m pip --version
+
+# Install other dependencies
+COPY requirements.txt ./
+
+RUN python3.10 -m pip install --no-cache-dir -r requirements.txt
+
+RUN mkdir /blobs
+
+COPY . .
+
+ENV MOCK=n
 
 CMD [ "uvicorn", "--host", "0.0.0.0", "--port", "80", "main:app" ]
