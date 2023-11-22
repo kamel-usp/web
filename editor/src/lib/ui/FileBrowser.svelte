@@ -1,6 +1,5 @@
 <script>
   import { Modal, Dropzone, Button } from "flowbite-svelte";
-  import { userID } from "$lib/stores/auth";
   import { get } from "svelte/store";
   import { editorTerminal } from "$lib/stores/editor";
 
@@ -49,7 +48,6 @@
   async function uploadFile() {
     const filename = value[0];
     const content = await fileList[0].text();
-    document.cookie = `user_id=${get(userID)}`;
     const response = await fetch("/api/instance/blob/upload", {
       method: "POST",
       body: JSON.stringify({ filename, content }),

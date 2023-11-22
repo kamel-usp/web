@@ -1,27 +1,16 @@
 <script>
 	import "../app.postcss";
 	import SvelteTheme from 'svelte-themes/SvelteTheme.svelte';
-	import { Button, Navbar, NavBrand, NavLi, NavUl, NavHamburger } from 'flowbite-svelte';
-    import { DarkMode } from 'flowbite-svelte';
-    import { signIn, signOut } from "@auth/sveltekit/client";
+	import { Navbar, NavBrand, NavLi, NavUl, NavHamburger } from 'flowbite-svelte';
 	import { page } from "$app/stores";
-	import { userID } from "$lib/stores/auth";
-	import { get } from "svelte/store";
-	import { makeid, hashid } from "$lib/auth";
-
+	import { setSessionID } from "$lib/auth";
+	import { onMount } from 'svelte';
+	
 	const navBarSize = "6vh";
-
-	// https://stackoverflow.com/a/40031979/9014097
-	function buf2hex(buffer) { // buffer is an ArrayBuffer
-	    return Array.prototype.map.call(new Uint8Array(buffer), x => ('00' + x.toString(16)).slice(-2)).join('');
-	}
-	async function setSessionID() {
-    	var id = makeid(24);
-    	if ($page.data?.session?.user.email == undefined) id = await hashid(id);
-    	else id = await hashid($page.data?.session?.user.email);
-    	userID.set(buf2hex(id));
-	}
-	setSessionID();
+	
+	onMount(() => {
+		setSessionID($page);
+	});
 
 </script>
 <Navbar let:hidden let:toggle style="background-color: #2e2e2e; color: #e6e6e6; height: {navBarSize}">
