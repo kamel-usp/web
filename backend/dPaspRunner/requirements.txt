@@ -1,5 +1,3 @@
 fastapi
 uvicorn[standard]
-torch
-clingo
 python-multipart
