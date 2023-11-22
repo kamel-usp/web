@@ -1,7 +1,9 @@
 <script>
-  import { Modal, Dropzone, Button } from "flowbite-svelte";
+  import { Modal, Dropzone, Button, Listgroup, ButtonGroup } from "flowbite-svelte";
+  import { userID } from "$lib/stores/auth";
   import { get } from "svelte/store";
-  import { editorTerminal } from "$lib/stores/editor";
+  import { currentFile, editorTerminal } from "$lib/stores/editor";
+  import { FileSolid, AdjustmentsVerticalOutline, UploadSolid } from 'flowbite-svelte-icons';
 
   const dropHandle = (event) => {
     value = [];
@@ -74,13 +76,36 @@
     console.log (res);
   }
 
+  function setCurrentFile(name) {
+      currentFile.set(name);
+  }
+
   let value = [];
   let fileList = [];
   let clickOutsideModal = false;
+  
+  let icons = [
+      { name: 'HelloWorld.dPasp', icon: FileSolid },
+      { name: 'HelloWorld.py', icon: FileSolid },
+    ];
 </script>
 
-<Button on:click={() => (clickOutsideModal = true)}>File Browser</Button>
-<Button on:click={() => (listFiles ())}>List Files</Button>
+<ButtonGroup>
+  <Button>
+    <AdjustmentsVerticalOutline class="w-3 h-3 mr-2" />
+  </Button>
+  <Button on:click={() => (clickOutsideModal = true)}>
+    <UploadSolid class="w-3 h-3 mr-2" />
+  </Button>
+</ButtonGroup>
+
+
+<Listgroup active items={icons} let:item class="w-100 rounded-none border-0 border-hidden">
+    <svelte:component this={item.icon} class="w-3 h-3 mr-2.5" on:click={() => setCurrentFile(item.name)}/>
+    <span on:click={() => setCurrentFile(item.name)}>{item.name}</span>
+</Listgroup>
+<!-- <Button on:click={() => (clickOutsideModal = true)}>File Browser</Button>
+<Button on:click={() => (listFiles ())}>List Files</Button> -->
 
 <Modal title="File upload" bind:open={clickOutsideModal} autoclose outsideclose>
   <Dropzone

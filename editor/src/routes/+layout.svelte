@@ -3,16 +3,18 @@
 	import SvelteTheme from 'svelte-themes/SvelteTheme.svelte';
 	import { Navbar, NavBrand, NavLi, NavUl, NavHamburger } from 'flowbite-svelte';
 	import { page } from "$app/stores";
-	import { setSessionID } from "$lib/auth";
 	import { onMount } from 'svelte';
-	
+	import { userID, loggedIn } from "$lib/stores/auth";
+	import { get } from "svelte/store";
+	import { makeid, hashid, setSessionID } from "$lib/auth";
+
 	const navBarSize = "6vh";
 	
 	onMount(() => {
 		setSessionID($page);
 	});
-
 </script>
+
 <Navbar let:hidden let:toggle style="background-color: #2e2e2e; color: #e6e6e6; height: {navBarSize}">
 	<NavBrand href="/">
 		<span class="self-center whitespace-nowrap text-xl font-semibold dark:text-white">dPasp Playground</span>

@@ -10,49 +10,38 @@
 	import Status from "$lib/ui/Status.svelte";
 	import Terminal from "$lib/ui/Terminal.svelte";
 	import FileBrowser from "$lib/ui/FileBrowser.svelte";
-	import { editorDpasp, editorPython } from "$lib/stores/editor";
-
+	import { currentFile, fileContents } from "$lib/stores/editor";
+	import { get } from "svelte/store";
 	const pageSize = "94vh";
 </script>
 
 <div class="page-container">
-	<Tabs>
-		<TabItem open>
-			<span slot="title">Dpasp</span>
+	<SplitPane type="horizontal" min="10%" max="15%" id="top">
+		<section slot="a" id="browser">
+			<FileBrowser />
+		</section>
+		<section slot="b" id="ide">
 			<div id="codeMirror">
-				<CodeMirror
-					bind:value={$editorDpasp}
-					placeholder="# Add your dPasp code"
+			<CodeMirror
+					bind:value={$fileContents[$currentFile]}
 					lang={python()}
 					theme={oneDark}
-				/>
+			/>
 			</div>
-		</TabItem>
-		<TabItem open>
-			<span slot="title">Python</span>
-			<div id="codeMirror">
-				<CodeMirror
-					bind:value={$editorPython}
-					placeholder="# Add your python code"
-					lang={python()}
-					theme={oneDark}
-				/>
-			</div>
-		</TabItem>
-	</Tabs>
+		</section>
+	</SplitPane>
 	<Toolbar />
-	<SplitPane type="horizontal" min="30%" max="70%" >
+	<SplitPane type="horizontal" min="30%" max="70%"  id="bottom">
 		<section slot="a" id="console"><Terminal /></section>
 		<section slot="b" id="output"><Status /></section>
 	</SplitPane>
 </div>
-<FileBrowser />
 
 <style>
 	#codeMirror {
 		background-color: #242424;
-		min-height: 55vh;
-		max-height: 55vh;
+		min-height: 60vh;
+		max-height: 60vh;
 		overflow: auto;
 		position: relative;
 	}
@@ -61,4 +50,5 @@
 		flex-direction: column;
     	height: 94vh; /* 100vh - navBarSize */
 	}
+
 </style>
