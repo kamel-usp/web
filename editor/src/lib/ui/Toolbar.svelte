@@ -8,26 +8,21 @@
 	} from "flowbite-svelte";
 	import { PlayOutline, ChevronDownSolid } from "flowbite-svelte-icons";
 	import { editorDpasp, editorPython, editorTerminal } from "$lib/stores/editor";
-  	import { userID } from "$lib/stores/auth";
 	import { get } from "svelte/store";
 	import { Spinner } from "flowbite-svelte";
-
-	import HoverMenu from "$lib/ui/HoverMenu/HoverMenu.svelte"
-	import HoverMenuItem from "$lib/ui/HoverMenu/HoverMenuItem.svelte"
 
 	let submitting = false;
 
 	async function submit() {
 		submitting = true;
 		// TODO: send python code
-		const code = get(editorDpasp);
+		const code = get(editorDpasp) == undefined ? "" : get(editorDpasp);
 		const sem = semantic_options["Semantics"][selected_semantics["Semantics"]]
 		const psem = semantic_options["PSemantics"][selected_semantics["PSemantics"]]
 		
-    	const user_id = get(userID);
-		const response = await fetch("/api/containermanager/run", {
+		const response = await fetch("/api/instance/run", {
 			method: "POST",
-			body: JSON.stringify({ sem, psem, code, user_id }),
+			body: JSON.stringify({ sem, psem, code }),
 			headers: {
 				"content-type": "application/json",
 			},
@@ -85,8 +80,5 @@
 	.flex-container {
 		display: flex;
 		gap: 20px;
-	}
-	.button {
-		background-color: black;
 	}
 </style>
