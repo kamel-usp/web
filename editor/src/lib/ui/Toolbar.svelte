@@ -13,6 +13,20 @@
 
 	let submitting = false;
 
+	function interpolateResult(code, result) {
+		result = JSON.parse(result);
+		let result_comment = "%%% RESULT: ";
+		let lines = code.split("\n").filter((line) => !line.startsWith(result_comment));
+		let cur_result = 0;
+		for (let i = 0; i < lines.length; i++) {
+			if (lines[i].match(/^[:whitespace:]*#query/g)) {
+				lines[i] += "\n" + result_comment + result[cur_result];
+				cur_result++;
+			}
+		}
+		return lines.join("\n");
+	}
+
 	async function submit() {
 		submitting = true;
 		// TODO: send python code
@@ -27,8 +41,9 @@
 				"content-type": "application/json",
 			},
 		});
-
+		
 		let res = await response.json();
+		editorDpasp.set (interpolateResult(code, res.result));
 		editorTerminal.set ("> " + (res.result == undefined ? "An error ocurred while processing your code." : res.result));
 		submitting = false;
 	}
