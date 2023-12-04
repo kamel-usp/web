@@ -12,25 +12,37 @@
 	import { Spinner } from "flowbite-svelte";
 
 	let submitting = false;
+	let inf = "1000000";
 
 	function interpolateResult(code, result) {
-		result = JSON.parse(result);
-		let result_comment = "%%% RESULT: ";
-		let lines = code.split("\n").filter((line) => !line.startsWith(result_comment));
-		let cur_result = 0;
-		for (let i = 0; i < lines.length; i++) {
-			if (lines[i].match(/^[:whitespace:]*#query/g)) {
-				lines[i] += "\n" + result_comment + result[cur_result];
-				cur_result++;
-			}
+		while (result.includes("inf")) {
+			result = result.replace("inf", inf)
 		}
-		return lines.join("\n");
+		try {
+			result = JSON.parse(result);
+			let result_comment = "% RESULT: ";
+			let lines = code.split("\n").filter((line) => !line.startsWith(result_comment));
+			let cur_result = 0;
+			for (let i = 0; i < lines.length; i++) {
+				if (lines[i].match(/^[:whitespace:]*#query/g)) {
+					lines[i] += "\n" + result_comment + result[cur_result];
+					cur_result++;
+				}
+			}
+			let ans = lines.join ("\n");
+			while (ans.includes(inf)) {
+				ans = ans.replace(inf, "inf")
+			}
+			return ans;
+		} catch (e) {
+			return "Erro: \n" + result;
+		}
 	}
 
 	async function submit() {
 		submitting = true;
 		// TODO: send python code
-		const code = get(editorDpasp) == undefined ? "" : get(editorDpasp);
+		const code = get(editorDpasp) == undefined ? "" : get(editorDpasp) + "\n";
 		const sem = semantic_options["Semantics"][selected_semantics["Semantics"]]
 		const psem = semantic_options["PSemantics"][selected_semantics["PSemantics"]]
 		
@@ -43,8 +55,14 @@
 		});
 		
 		let res = await response.json();
-		editorDpasp.set (interpolateResult(code, res.result));
-		editorTerminal.set ("> " + (res.result == undefined ? "An error ocurred while processing your code." : res.result));
+
+		let newResult = interpolateResult(code, res.result);
+		if (newResult.startsWith("Erro:")) {
+			editorTerminal.set ("> " + newResult);
+		}
+		else {
+			editorDpasp.set (newResult);
+		}
 		submitting = false;
 	}
 
