@@ -15,4 +15,5 @@ def run_program (sem, psem, code):
         # program.Q
         # https://github.com/kamel-usp/dpasp/blob/master/pasp/program.py
         P = pasp.parse(code, from_str=True, semantics=sem)
-        return pasp.exact(P, psemantics=psem)
+        ans = pasp.exact(P, psemantics=psem)
+        return list(map(lambda v: v.tolist(), ans))
