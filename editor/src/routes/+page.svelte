@@ -10,49 +10,62 @@
 	import Status from "$lib/ui/Status.svelte";
 	import Terminal from "$lib/ui/Terminal.svelte";
 	import FileBrowser from "$lib/ui/FileBrowser.svelte";
-	import { editorDpasp, editorPython } from "$lib/stores/editor";
+	import { editorDpasp, editorPython, editorTerminal } from "$lib/stores/editor";
+	import { get } from "svelte/store";
+    import ToolbarTerminal from "$lib/ui/ToolbarTerminal.svelte";
 
 	const pageSize = "94vh";
 </script>
 
 <div class="page-container">
-	<Tabs>
-		<TabItem open>
-			<span slot="title">Dpasp</span>
-			<div id="codeMirror">
-				<CodeMirror
-					bind:value={$editorDpasp}
-					placeholder="# Add your dPasp code"
-					lang={python()}
-					theme={oneDark}
-				/>
-			</div>
-		</TabItem>
-		<TabItem open>
-			<span slot="title">Python</span>
-			<div id="codeMirror">
-				<CodeMirror
-					bind:value={$editorPython}
-					placeholder="# Add your python code"
-					lang={python()}
-					theme={oneDark}
-				/>
-			</div>
-		</TabItem>
-	</Tabs>
-	<Toolbar />
-	<SplitPane type="horizontal" min="30%" max="70%" >
-		<section slot="a" id="console"><Terminal /></section>
-		<section slot="b" id="output"><Status /></section>
-	</SplitPane>
+	{#if get (editorTerminal) != "epty"}
+		<Tabs>
+			<TabItem open>
+				<span slot="title">Dpasp</span>
+				<div id="codeMirrorError">
+					<CodeMirror
+						bind:value={$editorDpasp}
+						placeholder="# Add your dPasp code"
+						lang={python()}
+						theme={oneDark}
+					/>
+				</div>
+			</TabItem>
+		</Tabs>
+		<Toolbar />
+		<ToolbarTerminal />
+		<div id="console"><Terminal /></div>
+	{:else}
+		<Tabs>
+			<TabItem open>
+				<span slot="title">Dpasp</span>
+				<div id="codeMirrorNormal">
+					<CodeMirror
+						bind:value={$editorDpasp}
+						placeholder="# Add your dPasp code"
+						lang={python()}
+						theme={oneDark}
+					/>
+				</div>
+			</TabItem>
+		</Tabs>
+		<Toolbar />
+	{/if}
 </div>
 <FileBrowser />
 
 <style>
-	#codeMirror {
+	#codeMirrorError {
 		background-color: #242424;
 		min-height: 55vh;
 		max-height: 55vh;
+		overflow: auto;
+		position: relative;
+	}
+	#codeMirrorNormal {
+		background-color: #242424;
+		min-height: 83vh;
+		max-height: 83vh;
 		overflow: auto;
 		position: relative;
 	}

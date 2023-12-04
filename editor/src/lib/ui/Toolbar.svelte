@@ -43,8 +43,13 @@
 		});
 		
 		let res = await response.json();
-		editorDpasp.set (interpolateResult(code, res.result));
-		editorTerminal.set ("> " + (res.result == undefined ? "An error ocurred while processing your code." : res.result));
+		if (res.result == undefined || res.result.startsWith("Error")) {
+			editorTerminal.set (res.result);
+		}
+		else {
+			editorDpasp.set (interpolateResult(code, res.result));
+			editorTerminal.set ("empty");
+		}
 		submitting = false;
 	}
 
