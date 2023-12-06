@@ -2,7 +2,7 @@
   import { Modal, Dropzone, Button, Listgroup, ButtonGroup } from "flowbite-svelte";
   import { userID } from "$lib/stores/auth";
   import { get } from "svelte/store";
-  import { currentFile, editorTerminal } from "$lib/stores/editor";
+  import { currentFile, editorTerminal, fileContents } from "$lib/stores/editor";
   import { FileSolid, AdjustmentsVerticalOutline, UploadSolid } from 'flowbite-svelte-icons';
 
   const dropHandle = (event) => {
@@ -47,9 +47,7 @@
     return concat;
   };
 
-  async function uploadFile() {
-    const filename = value[0];
-    const content = await fileList[0].text();
+  async function uploadFile(filename, content) {
     const response = await fetch("/api/instance/blob/upload", {
       method: "POST",
       body: JSON.stringify({ filename, content }),
@@ -57,9 +55,14 @@
         "content-type": "application/json",
       },
     });
-    console.log(response.status);
     let res = await response.json();
-    console.log(res);
+  }
+
+  async function submitFile() {
+    const content = await fileList[0].text();
+    const filename = value[0];
+    await uploadFile(filename, content);
+    refresh++;
   }
 
   async function listFiles() {
@@ -70,24 +73,56 @@
         "content-type": "application/json",
       },
     });
-    console.log (response.status);
     let res = await response.json ();
     editorTerminal.set ("> " + (res.files == undefined ? "An error ocurred while listing files." : res.files));
-    console.log (res);
+  }
+
+  async function parseEachFile(files) {
+      let data = []
+      for (const filename of files) {
+        const response = await fetch("/api/instance/blob/fetch", {
+          method: "POST",
+          body: JSON.stringify({filename}),
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+        let res = await response.json();
+        data.push({name: filename, icon: FileSolid});
+        $fileContents.push(filename);
+        $fileContents[filename] = res.content;
+      }
+      return data
+  }
+
+  async function saveFiles() {
+    for (const filename of $fileContents) {
+      uploadFile(filename, $fileContents[filename]);
+    }
+  }
+
+  async function fetchFiles() {
+    saveFiles();
+    const response = await fetch("/api/instance/blob/list", {
+      method: "POST",
+      body: JSON.stringify({ }),
+      headers: {
+        "content-type": "application/json",
+      },
+    });
+    let res = await response.json ();
+    editorTerminal.set ("> " + (res.files == undefined ? "An error ocurred while listing files." : ""));
+    return await parseEachFile(res.files);
   }
 
   function setCurrentFile(name) {
       currentFile.set(name);
   }
 
+  let refresh = 0;
   let value = [];
   let fileList = [];
   let clickOutsideModal = false;
-  
-  let icons = [
-      { name: 'HelloWorld.dPasp', icon: FileSolid },
-      { name: 'HelloWorld.py', icon: FileSolid },
-    ];
 </script>
 
 <ButtonGroup>
@@ -99,11 +134,14 @@
   </Button>
 </ButtonGroup>
 
-
-<Listgroup active items={icons} let:item class="w-100 rounded-none border-0 border-hidden">
-    <svelte:component this={item.icon} class="w-3 h-3 mr-2.5" on:click={() => setCurrentFile(item.name)}/>
-    <span on:click={() => setCurrentFile(item.name)}>{item.name}</span>
-</Listgroup>
+{#key refresh}
+  {#await fetchFiles() then icons}
+    <Listgroup active items={icons} let:item class="w-100 rounded-none border-0 border-hidden">
+      <svelte:component this={item.icon} class="w-3 h-3 mr-2.5" on:click={() => setCurrentFile(item.name)}/>
+      <span on:click={() => setCurrentFile(item.name)}>{item.name}</span>
+    </Listgroup>
+  {/await}
+{/key}
 <!-- <Button on:click={() => (clickOutsideModal = true)}>File Browser</Button>
 <Button on:click={() => (listFiles ())}>List Files</Button> -->
 
@@ -124,6 +162,6 @@
     {/if}
   </Dropzone>
   <svelte:fragment slot="footer">
-    <Button color="alternative" on:click={uploadFile}>Submit</Button>
+    <Button color="alternative" on:click={submitFile}>Submit</Button>
   </svelte:fragment>
 </Modal>

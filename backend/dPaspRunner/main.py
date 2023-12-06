@@ -47,14 +47,28 @@ class FileToSave(BaseModel):
     content: str
 
 @app.post("/blob/upload")
-async def upload_blob(src: FileToSave):
-    with open(f"{blob_folder}{src.filename}", "w") as dest:
-        dest.write(src.content)
+async def upload_blob(f: FileToSave):
+    os.makedirs(blob_folder, exist_ok=True)
+    with open(f"{blob_folder}{f.filename}", "w") as dest:
+        dest.write(f.content)
     return {"status": "ok"}
 
 @app.post("/blob/list")
 async def list_blobs():
     return {"files" : os.listdir(blob_folder)}
+
+class FileToRead(BaseModel):
+    filename: str
+
+@app.post("/blob/fetch")
+async def fetch_blob(f: FileToRead):
+    content = ''
+    try:
+        with open(f"{blob_folder}{f.filename}", "r") as file:
+            content = file.read()
+    except Exception as e: 
+        print(f'/blob/fetch: {e}')
+    return {"content": content}
 
 class FileToDelete(BaseModel):
     filename: str

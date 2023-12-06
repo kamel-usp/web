@@ -13,6 +13,23 @@
 	import { currentFile, fileContents } from "$lib/stores/editor";
 	import { get } from "svelte/store";
 	const pageSize = "94vh";
+
+	async function uploadFile(filename, content) {
+	  const response = await fetch("/api/instance/blob/upload", {
+	    method: "POST",
+	    body: JSON.stringify({ filename, content }),
+	    headers: {
+	      "content-type": "application/json",
+	    },
+	  });
+	  let res = await response.json();
+	}
+
+	async function saveFile() {
+	  const content = $fileContents[$currentFile]
+	  const filename = $currentFile
+	  await uploadFile(filename, content);
+	}
 </script>
 
 <div class="page-container">
@@ -26,6 +43,7 @@
 					bind:value={$fileContents[$currentFile]}
 					lang={python()}
 					theme={oneDark}
+					on:change={saveFile}
 			/>
 			</div>
 		</section>

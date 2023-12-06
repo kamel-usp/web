@@ -1,5 +1,5 @@
 // https://stackoverflow.com/questions/1349404/generate-random-string-characters-in-javascript
-function makeid(length: number) : string {
+export function makeid(length: number) : string {
   let result = '';
   const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   const charactersLength = characters.length;
@@ -11,7 +11,7 @@ function makeid(length: number) : string {
   return result;
 }
 
-async function hashid(message: string) : Promise<ArrayBuffer> {
+export async function hashid(message: string) : Promise<ArrayBuffer> {
   const encoder = new TextEncoder();
   const data = encoder.encode(message);
   const hash = await crypto.subtle.digest('SHA-256', data);
