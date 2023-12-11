@@ -53,13 +53,11 @@
 	async function submit() {
 		const filename = $currentFile
 		const content = $fileContents[filename]
-		console.log ("filename", filename);
 		ref.update((n) => n + 1);
 
 		submitting = true;
 		
 		const code = content == undefined ? "" : content + "\n";
-		console.log ("code", code);
 		const sem = semantic_options["Semantics"][selected_semantics["Semantics"]]
 		const psem = semantic_options["PSemantics"][selected_semantics["PSemantics"]]
 		
@@ -72,15 +70,12 @@
 		});
 		
 		let res = await response.json();
-		console.log (res);
 
 		let newResult = interpolateResult(code, res.result);
-		console.log ("newResult", newResult);
 		if (newResult.startsWith("Erro:")) {
 			editorTerminal.set ("> " + newResult);
 		}
 		else {
-			console.log ("uploading", filename, newResult)
 			uploadFile(filename, newResult);
 		}
 		submitting = false;
