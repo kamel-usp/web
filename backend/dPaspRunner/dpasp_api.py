@@ -9,11 +9,6 @@ def run_program (sem, psem, code):
     if is_mock: 
         return [random.random() for i in range(code.count("#query"))]
     else:
-        # TODO: return stdout and stderr
-        # TODO: pasp.approx.aseo(P, 100, psemantics = ...)
-
-        # program.Q
-        # https://github.com/kamel-usp/dpasp/blob/master/pasp/program.py
         P = pasp.parse(code, from_str=True, semantics=sem)
         ans = pasp.exact(P, psemantics=psem)
         return list(map(lambda v: v.tolist(), ans))
