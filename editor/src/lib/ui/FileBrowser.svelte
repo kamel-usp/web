@@ -126,7 +126,7 @@
 </script>
 
 <ButtonGroup>
-  <Button>
+  <Button on:click={listFiles}>
     <AdjustmentsVerticalOutline class="w-3 h-3 mr-2" />
   </Button>
   <Button on:click={() => (clickOutsideModal = true)}>
