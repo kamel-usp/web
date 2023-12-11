@@ -1,9 +1,8 @@
 <script>
   import { Modal, Dropzone, Button, Listgroup, ButtonGroup } from "flowbite-svelte";
-  import { userID } from "$lib/stores/auth";
-  import { get } from "svelte/store";
-  import { currentFile, editorTerminal, fileContents } from "$lib/stores/editor";
+  import { currentFile, editorTerminal, fileContents, ref } from "$lib/stores/editor";
   import { FileSolid, AdjustmentsVerticalOutline, UploadSolid } from 'flowbite-svelte-icons';
+  import { get } from "svelte/store";
 
   const dropHandle = (event) => {
     value = [];
@@ -25,10 +24,10 @@
 
   const handleChange = (event) => {
     const files = event.target.files;
-    if (files.length > 0) {
+    for (let i = 0; i < files.length; i++) {
       // TODO: allow multiple files at once by iterating them
-      value.push(files[0].name);
-      fileList.push(files[0]);
+      value.push(files[i].name);
+      fileList.push(files[i]);
       value = value;
     }
   };
@@ -58,11 +57,17 @@
     let res = await response.json();
   }
 
-  async function submitFile() {
-    const content = await fileList[0].text();
-    const filename = value[0];
-    await uploadFile(filename, content);
-    refresh++;
+  async function submitUploadFile() {
+    while (fileList.length > 0) {
+      const content = await fileList[0].text();
+      const filename = value[0];
+  
+      fileList.shift();
+      value.shift();
+      await uploadFile(filename, content);
+    }
+    ref.update((n) => n + 1);
+    refresh = get(ref);
   }
 
   async function listFiles() {
@@ -142,8 +147,6 @@
     </Listgroup>
   {/await}
 {/key}
-<!-- <Button on:click={() => (clickOutsideModal = true)}>File Browser</Button>
-<Button on:click={() => (listFiles ())}>List Files</Button> -->
 
 <Modal title="File upload" bind:open={clickOutsideModal} autoclose outsideclose>
   <Dropzone
@@ -162,6 +165,6 @@
     {/if}
   </Dropzone>
   <svelte:fragment slot="footer">
-    <Button color="alternative" on:click={submitFile}>Submit</Button>
+    <Button color="alternative" on:click={submitUploadFile}>Submit</Button>
   </svelte:fragment>
 </Modal>
