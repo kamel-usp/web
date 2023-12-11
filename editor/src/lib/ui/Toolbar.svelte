@@ -7,12 +7,23 @@
 		Radio,
 	} from "flowbite-svelte";
 	import { PlayOutline, ChevronDownSolid } from "flowbite-svelte-icons";
-	import { editorDpasp, editorPython, editorTerminal } from "$lib/stores/editor";
+	import { currentFile, fileContents, editorTerminal, ref } from "$lib/stores/editor";
 	import { get } from "svelte/store";
 	import { Spinner } from "flowbite-svelte";
 
 	let submitting = false;
 	let inf = "1000000";
+
+	async function uploadFile(filename, content) {
+		const response = await fetch("/api/instance/blob/upload", {
+			method: "POST",
+			body: JSON.stringify({ filename, content }),
+			headers: {
+				"content-type": "application/json",
+			},
+		});
+		let res = await response.json();
+	}
 
 	function interpolateResult(code, result) {
 		while (result.includes("inf")) {
@@ -40,9 +51,15 @@
 	}
 
 	async function submit() {
+		const filename = $currentFile
+		const content = $fileContents[filename]
+		console.log ("filename", filename);
+		ref.update((n) => n + 1);
+
 		submitting = true;
-		// TODO: send python code
-		const code = get(editorDpasp) == undefined ? "" : get(editorDpasp) + "\n";
+		
+		const code = content == undefined ? "" : content + "\n";
+		console.log ("code", code);
 		const sem = semantic_options["Semantics"][selected_semantics["Semantics"]]
 		const psem = semantic_options["PSemantics"][selected_semantics["PSemantics"]]
 		
@@ -55,13 +72,16 @@
 		});
 		
 		let res = await response.json();
+		console.log (res);
 
 		let newResult = interpolateResult(code, res.result);
+		console.log ("newResult", newResult);
 		if (newResult.startsWith("Erro:")) {
 			editorTerminal.set ("> " + newResult);
 		}
 		else {
-			editorDpasp.set (newResult);
+			console.log ("uploading", filename, newResult)
+			uploadFile(filename, newResult);
 		}
 		submitting = false;
 	}
