@@ -3,39 +3,21 @@
 	import CodeMirror from "svelte-codemirror-editor";
 	import { python } from "@codemirror/lang-python";
 	import { oneDark } from "@codemirror/theme-one-dark";
-	import { Tabs, TabItem} from "flowbite-svelte";
-	import { ArrowRightOutline } from "flowbite-svelte-icons";
 
 	import Toolbar from "$lib/ui/Toolbar.svelte";
 	import Status from "$lib/ui/Status.svelte";
 	import Terminal from "$lib/ui/Terminal.svelte";
 	import FileBrowser from "$lib/ui/FileBrowser.svelte";
 	import { currentFile, fileContents } from "$lib/stores/editor";
-	import { get } from "svelte/store";
 	const pageSize = "94vh";
 
-	async function uploadFile(filename, content) {
-	  const response = await fetch("/api/instance/blob/upload", {
-	    method: "POST",
-	    body: JSON.stringify({ filename, content }),
-	    headers: {
-	      "content-type": "application/json",
-	    },
-	  });
-	  let res = await response.json();
-	}
-
-	async function saveFile() {
-	  const content = $fileContents[$currentFile]
-	  const filename = $currentFile
-	  await uploadFile(filename, content);
-	}
+	let fileBrowserComp;
 </script>
 
 <div class="page-container">
 	<SplitPane type="horizontal" min="10%" max="15%" id="top">
 		<section slot="a" id="browser">
-			<FileBrowser />
+			<FileBrowser bind:this={fileBrowserComp} />
 		</section>
 		<section slot="b" id="ide">
 			<div id="codeMirror">
@@ -43,7 +25,7 @@
 					bind:value={$fileContents[$currentFile]}
 					lang={python()}
 					theme={oneDark}
-					on:change={saveFile}
+					on:change={fileBrowserComp.saveFile}
 			/>
 			</div>
 		</section>
