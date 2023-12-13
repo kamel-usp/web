@@ -31,10 +31,7 @@
 		</section>
 	</SplitPane>
 	<Toolbar />
-	<SplitPane type="horizontal" min="30%" max="70%"  id="bottom">
-		<section slot="a" id="console"><Terminal /></section>
-		<section slot="b" id="output"><Status /></section>
-	</SplitPane>
+	<Terminal />
 </div>
 
 <style>
