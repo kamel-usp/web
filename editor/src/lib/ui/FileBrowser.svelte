@@ -142,8 +142,10 @@
 {#key refresh}
   {#await fetchFiles() then icons}
     <Listgroup active items={icons} let:item class="w-100 rounded-none border-0 border-hidden">
-      <svelte:component this={item.icon} class="w-3 h-3 mr-2.5" on:click={() => setCurrentFile(item.name)}/>
-      <span on:click={() => setCurrentFile(item.name)}>{item.name}</span>
+      {#if item}
+        <svelte:component this={item.icon} class="w-3 h-3 mr-2.5" on:click={() => setCurrentFile(item.name)}/>
+        <span on:click={() => setCurrentFile(item.name)}>{item.name}</span>
+      {/if}
     </Listgroup>
   {/await}
 {/key}

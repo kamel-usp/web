@@ -5,7 +5,6 @@
 	import { oneDark } from "@codemirror/theme-one-dark";
 
 	import Toolbar from "$lib/ui/Toolbar.svelte";
-	import Status from "$lib/ui/Status.svelte";
 	import Terminal from "$lib/ui/Terminal.svelte";
 	import FileBrowser from "$lib/ui/FileBrowser.svelte";
 	import { currentFile, fileContents } from "$lib/stores/editor";
@@ -21,12 +20,14 @@
 		</section>
 		<section slot="b" id="ide">
 			<div id="codeMirror">
-			<CodeMirror
+			{#if $currentFile != ""}
+				<CodeMirror
 					bind:value={$fileContents[$currentFile]}
 					lang={python()}
 					theme={oneDark}
 					on:change={fileBrowserComp.saveFile}
-			/>
+				/>
+			{/if}
 			</div>
 		</section>
 	</SplitPane>
