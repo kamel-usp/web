@@ -47,6 +47,7 @@
 		display: flex;
 		flex-direction: column;
     	height: 94vh; /* 100vh - navBarSize */
+		padding-top: 48px;
 	}
 
 </style>

@@ -15,9 +15,9 @@
 	});
 </script>
 
-<Navbar let:hidden let:toggle style="background-color: #2e2e2e; color: #e6e6e6; height: {navBarSize}">
+<Navbar let:hidden let:toggle class="dark:bg-gray-900 fixed" style="color: #e6e6e6;">
 	<NavBrand href="/">
-		<span class="self-center whitespace-nowrap text-xl font-semibold dark:text-white">dPasp Playground</span>
+		<span class="self-center whitespace-nowrap text-xl font-semibold dark:text-primary-500">dPasp Playground</span>
 	</NavBrand>
 	<NavHamburger on:click={toggle} />
 	<NavUl {hidden}>

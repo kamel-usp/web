@@ -130,43 +130,46 @@
   let clickOutsideModal = false;
 </script>
 
-<ButtonGroup>
-  <Button on:click={listFiles}>
-    <AdjustmentsVerticalOutline class="w-3 h-3 mr-2" />
-  </Button>
-  <Button on:click={() => (clickOutsideModal = true)}>
-    <UploadSolid class="w-3 h-3 mr-2" />
-  </Button>
-</ButtonGroup>
+<div class="flex flex-col p-2 gap-2">
+  <ButtonGroup>
+    <Button on:click={listFiles}>
+      <AdjustmentsVerticalOutline class="w-3 h-3 mr-2" />
+    </Button>
+    <Button on:click={() => (clickOutsideModal = true)}>
+      <UploadSolid class="w-3 h-3 mr-2" />
+    </Button>
+  </ButtonGroup>
 
-{#key refresh}
-  {#await fetchFiles() then icons}
-    <Listgroup active items={icons} let:item class="w-100 rounded-none border-0 border-hidden">
-      {#if item}
-        <svelte:component this={item.icon} class="w-3 h-3 mr-2.5" on:click={() => setCurrentFile(item.name)}/>
-        <span on:click={() => setCurrentFile(item.name)}>{item.name}</span>
+  {#key refresh}
+    {#await fetchFiles() then icons}
+      <Listgroup active items={icons} let:item class="w-100 rounded-none border-0 border-hidden">
+        {#if item}
+          <svelte:component this={item.icon} class="w-3 h-3 mr-2.5" on:click={() => setCurrentFile(item.name)}/>
+          <span on:click={() => setCurrentFile(item.name)}>{item.name}</span>
+        {/if}
+      </Listgroup>
+    {/await}
+  {/key}
+
+  <Modal title="File upload" bind:open={clickOutsideModal} autoclose outsideclose>
+    <Dropzone
+      id="dropzone"
+      on:drop={dropHandle}
+      on:dragover={(event) => {
+        event.preventDefault();
+      }}
+      on:change={handleChange}>
+      <svg aria-hidden="true" class="mb-3 w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+      {#if value.length === 0}
+        <p class="mb-2 text-sm text-gray-500 dark:text-gray-400"><span class="font-semibold">Click to upload</span> or drag and drop</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400">SVG, PNG, JPG or GIF (MAX. 800x400px)</p>
+      {:else}
+        <p>{showFiles(value)}</p>
       {/if}
-    </Listgroup>
-  {/await}
-{/key}
+    </Dropzone>
+    <svelte:fragment slot="footer">
+      <Button color="alternative" on:click={submitUploadFile}>Submit</Button>
+    </svelte:fragment>
+  </Modal>
+</div>
 
-<Modal title="File upload" bind:open={clickOutsideModal} autoclose outsideclose>
-  <Dropzone
-    id="dropzone"
-    on:drop={dropHandle}
-    on:dragover={(event) => {
-      event.preventDefault();
-    }}
-    on:change={handleChange}>
-    <svg aria-hidden="true" class="mb-3 w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-    {#if value.length === 0}
-      <p class="mb-2 text-sm text-gray-500 dark:text-gray-400"><span class="font-semibold">Click to upload</span> or drag and drop</p>
-      <p class="text-xs text-gray-500 dark:text-gray-400">SVG, PNG, JPG or GIF (MAX. 800x400px)</p>
-    {:else}
-      <p>{showFiles(value)}</p>
-    {/if}
-  </Dropzone>
-  <svelte:fragment slot="footer">
-    <Button color="alternative" on:click={submitUploadFile}>Submit</Button>
-  </svelte:fragment>
-</Modal>
