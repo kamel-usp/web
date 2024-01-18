@@ -7,7 +7,7 @@
 		Radio,
 	} from "flowbite-svelte";
 	import { PlayOutline, ChevronDownSolid } from "flowbite-svelte-icons";
-	import { currentFile, fileContents, editorTerminal, ref } from "$lib/stores/editor";
+	import { currentFile, currentFileContent, editorTerminal, ref } from "$lib/stores/editor";
 	import { get } from "svelte/store";
 	import { Spinner } from "flowbite-svelte";
 
@@ -22,7 +22,7 @@
 				"content-type": "application/json",
 			},
 		});
-		let res = await response.json();
+		currentFileContent.set(content);
 	}
 
 	function interpolateResult(code, result) {
@@ -52,7 +52,7 @@
 
 	async function submit() {
 		const filename = $currentFile
-		const content = $fileContents[filename]
+		const content = $currentFileContent
 		ref.update((n) => n + 1);
 
 		submitting = true;

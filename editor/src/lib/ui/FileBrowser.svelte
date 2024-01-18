@@ -1,6 +1,6 @@
 <script>
   import { Modal, Dropzone, Button, Listgroup, ButtonGroup } from "flowbite-svelte";
-  import { currentFile, editorTerminal, fileContents, ref } from "$lib/stores/editor";
+  import { currentFile, currentFileContent, editorTerminal, ref } from "$lib/stores/editor";
   import { FileSolid, AdjustmentsVerticalOutline, UploadSolid } from 'flowbite-svelte-icons';
   import { get } from "svelte/store";
 
@@ -25,7 +25,6 @@
   const handleChange = (event) => {
     const files = event.target.files;
     for (let i = 0; i < files.length; i++) {
-      // TODO: allow multiple files at once by iterating them
       value.push(files[i].name);
       fileList.push(files[i]);
       value = value;
@@ -82,32 +81,7 @@
     editorTerminal.set ("> " + (res.files == undefined ? "An error ocurred while listing files." : res.files));
   }
 
-  async function parseEachFile(files) {
-      let data = []
-      for (const filename of files) {
-        const response = await fetch("/api/instance/blob/fetch", {
-          method: "POST",
-          body: JSON.stringify({filename}),
-          headers: {
-            "content-type": "application/json",
-          },
-        });
-        let res = await response.json();
-        data.push({name: filename, icon: FileSolid});
-        $fileContents.push(filename);
-        $fileContents[filename] = res.content;
-      }
-      return data
-  }
-
-  async function saveFiles() {
-    for (const filename of $fileContents) {
-      uploadFile(filename, $fileContents[filename]);
-    }
-  }
-
   async function fetchFiles() {
-    saveFiles();
     const response = await fetch("/api/instance/blob/list", {
       method: "POST",
       body: JSON.stringify({ }),
@@ -117,25 +91,56 @@
     });
     let res = await response.json ();
     editorTerminal.set ("> " + (res.files == undefined ? "An error ocurred while listing files." : ""));
-    return await parseEachFile(res.files);
+    const data = [];
+    for (const filename of res.files) {
+      data.push({name: filename, icon: FileSolid});
+    }
+    return data;
   }
 
-  function setCurrentFile(name) {
+  async function setCurrentFile(name) {
+      await uploadFile($currentFile, $currentFileContent);
       currentFile.set(name);
+      const response = await fetch("/api/instance/blob/fetch", {
+        method: "POST",
+        body: JSON.stringify({filename: name}),
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+      let res = await response.json();
+      currentFileContent.set(res.content)
+  }
+
+  async function addNewFile() {
+    await uploadFile(inputValue, "");
+    currentFile.set(inputValue);
+    currentFileContent.set("");
+
+    inputValue = ""
+    clickOutsideModalAddFile = false;
+
+    ref.update((n) => n + 1);
+    refresh = get(ref);
   }
 
   let refresh = 0;
   let value = [];
   let fileList = [];
-  let clickOutsideModal = false;
+  let clickOutsideModalUpload = false;
+  let clickOutsideModalAddFile = false;
+  let inputValue = "";
 </script>
 
 <div class="flex flex-col p-2 gap-2">
   <ButtonGroup>
+    <Button on:click={() => (clickOutsideModalAddFile = true)}>
+      <FileSolid class="w-3 h-3 mr-2" />
+    </Button>
     <Button on:click={listFiles}>
       <AdjustmentsVerticalOutline class="w-3 h-3 mr-2" />
     </Button>
-    <Button on:click={() => (clickOutsideModal = true)}>
+    <Button on:click={() => (clickOutsideModalUpload = true)}>
       <UploadSolid class="w-3 h-3 mr-2" />
     </Button>
   </ButtonGroup>
@@ -151,7 +156,7 @@
     {/await}
   {/key}
 
-  <Modal title="File upload" bind:open={clickOutsideModal} autoclose outsideclose>
+  <Modal title="File upload" bind:open={clickOutsideModalUpload} autoclose outsideclose>
     <Dropzone
       id="dropzone"
       on:drop={dropHandle}
@@ -169,6 +174,18 @@
     </Dropzone>
     <svelte:fragment slot="footer">
       <Button color="alternative" on:click={submitUploadFile}>Submit</Button>
+    </svelte:fragment>
+  </Modal>
+
+  <Modal title="Add file" bind:open={clickOutsideModalAddFile} autoclose outsideclose>
+    <p class="mb-2 text-sm text-gray-500 dark:text-gray-400">
+      <span class="font-semibold">Click to add</span> a new file
+    </p>
+  
+    <input type="text" bind:value={inputValue} placeholder="Enter file name" />
+  
+    <svelte:fragment slot="footer">
+      <Button color="alternative" on:click={addNewFile}>Add file</Button>
     </svelte:fragment>
   </Modal>
 </div>

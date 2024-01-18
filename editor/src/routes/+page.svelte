@@ -7,7 +7,7 @@
 	import Toolbar from "$lib/ui/Toolbar.svelte";
 	import Terminal from "$lib/ui/Terminal.svelte";
 	import FileBrowser from "$lib/ui/FileBrowser.svelte";
-	import { currentFile, fileContents } from "$lib/stores/editor";
+	import { currentFile, currentFileContent } from "$lib/stores/editor";
 	const pageSize = "94vh";
 
 	let fileBrowserComp;
@@ -22,7 +22,7 @@
 			<div id="codeMirror">
 			{#if $currentFile != ""}
 				<CodeMirror
-					bind:value={$fileContents[$currentFile]}
+					bind:value={$currentFileContent}
 					lang={python()}
 					theme={oneDark}
 					on:change={fileBrowserComp.saveFile}
