@@ -45,8 +45,10 @@ IS_MOCK = os.getenv("MOCK") == "y"
 #: terminate in any reasonable time, so the deadline is not optional.
 RUN_TIMEOUT_S = float(os.getenv("DPASP_RUN_TIMEOUT", "30"))
 
-#: Address-space ceiling applied inside the worker, below the container's own
-#: memory limit so that the worker dies before the container is OOM-killed.
+#: Heap ceiling applied inside the worker, below the container's own memory
+#: limit so that the worker dies before the container is OOM-killed. This
+#: bounds `RLIMIT_DATA`; it is not an address-space limit, because bounding
+#: the address space breaks `import torch` (see runner_worker.apply_limits).
 RUN_MEM_LIMIT_MB = int(os.getenv("DPASP_RUN_MEM_MB", "1024"))
 
 #: Cap on captured program output, so that a program printing in a loop cannot
@@ -197,7 +199,7 @@ def run_program(sem: str, psem: str, code: str, cwd: str = None) -> dict:
 
     if result is None:
         # The worker died without writing a result: a segfault in the C
-        # extension, or the address-space limit being hit.
+        # extension, or the heap limit being hit.
         message = "The solver stopped unexpectedly."
         if returncode and returncode < 0:
             message += f" It was killed by signal {-returncode}."

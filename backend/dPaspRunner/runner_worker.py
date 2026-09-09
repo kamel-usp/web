@@ -25,6 +25,8 @@ import resource
 import sys
 import time
 
+#: Heap ceiling for one run, in MB. Bounds `RLIMIT_DATA`, not the address
+#: space — see `apply_limits`.
 DEFAULT_MEM_LIMIT_MB = 1024
 DEFAULT_STACK_LIMIT_MB = 64
 
@@ -34,17 +36,33 @@ OUTPUT_MARKER = "\x1e--dpasp-runner-ready--\x1e"
 
 
 def apply_limits(mem_limit_mb: int) -> None:
-    """Cap the child's address space and disable core dumps.
+    """Cap the child's heap and disable core dumps.
 
-    These are a second line of defence *inside* the runner container, so that
-    one pathological program cannot exhaust the memory the container as a
-    whole is allowed. The container's own cgroup limits remain the primary
-    control.
+    A second line of defence *inside* the runner container, so that one
+    pathological program cannot exhaust the memory the container as a whole is
+    allowed. The container's own cgroup limits remain the primary control.
+
+    The cap is `RLIMIT_DATA` — the heap — and deliberately **not**
+    `RLIMIT_AS`. `RLIMIT_AS` bounds the whole virtual address space, which
+    includes file-backed mappings of shared libraries, and importing PyTorch
+    maps an enormous amount of address space without using anywhere near that
+    much memory. Under `RLIMIT_AS` the loader's `mmap` fails and `import
+    torch` dies with
+
+        libtorch_python.so: failed to map segment from shared object
+
+    or, if the limit is tighter still, segfaults in the dynamic loader before
+    Python can raise anything. For scale: on this stack a 67 MB shared object
+    pulled virtual size from 14 MB to 464 MB.
+
+    `RLIMIT_DATA` exempts file-backed mappings (since Linux 4.7 it covers brk
+    plus private anonymous mmap), so libraries load normally while a runaway
+    allocation still fails — and fails cleanly, as a `MemoryError`.
     """
     if mem_limit_mb and mem_limit_mb > 0:
         limit = mem_limit_mb * 1024 * 1024
         try:
-            resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+            resource.setrlimit(resource.RLIMIT_DATA, (limit, limit))
         except (ValueError, OSError):
             pass
     try:

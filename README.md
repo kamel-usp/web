@@ -94,6 +94,15 @@ The image ends the dPASP stage by running a one-line program and asserting the
 answer, so a broken build fails during `docker compose build` rather than at
 a user's first query.
 
+#### `libtorch_python.so: failed to map segment from shared object`
+
+The per-run memory limit was capping the virtual address space rather than the
+heap, so the dynamic loader could not map PyTorch. Fixed: the limit is now
+`RLIMIT_DATA`. See **Why the runner forks a process** for the details. If you
+see this again after changing `DPASP_RUN_MEM_MB`, that variable now bounds the
+heap and 1 GB is the default — the error means something re-introduced an
+address-space limit.
+
 #### The editor says it cannot obtain a runner, or the log shows `ECONNREFUSED`
 
 On a cold start this is expected for a few minutes, and the first build is the
@@ -247,6 +256,25 @@ Tunable through the environment: `DPASP_RUN_TIMEOUT` (default 30 s),
 These sit inside the runner container and complement, not replace, whatever
 CPU and memory limits the container itself is given.
 
+`DPASP_RUN_MEM_MB` bounds the **heap** (`RLIMIT_DATA`), deliberately not the
+address space (`RLIMIT_AS`). The two are very different for a process that
+loads big shared libraries: `RLIMIT_AS` counts file-backed mappings, and
+importing PyTorch maps far more address space than it ever uses. Capping the
+address space therefore made the loader's `mmap` fail and every run die with
+
+```
+libtorch_python.so: failed to map segment from shared object
+```
+
+and at tighter limits it segfaults inside the dynamic loader before Python can
+raise anything. For scale, on this stack a 67 MB shared object took virtual
+size from 14 MB to 464 MB, and numpy alone maps about 137 MB.
+
+`RLIMIT_DATA` exempts those mappings while still capping runaway allocation,
+and it fails cleanly as a `MemoryError`. If a legitimate program needs more
+than 1 GB of heap, raise `DPASP_RUN_MEM_MB` rather than reaching for
+`RLIMIT_AS`.
+
 ## Syntax highlighting
 
 `editor/src/lib/lang/pasp.ts` is a CodeMirror 6 language for dPASP, ported
@@ -277,7 +305,7 @@ cd web/editor && npm run check         # svelte-check: 0 errors
 #   cd web/backend && pip install -r requirements-dev.txt
 cd web/backend && python3 -m pytest test_main.py      #  6: startup, readiness
 cd web/backend/containerManager && python3 -m pytest  # 18: queue, lifecycle
-cd web/backend/dPaspRunner && python3 -m pytest       # 15: result format, limits
+cd web/backend/dPaspRunner && python3 -m pytest       # 22: result format, limits
 ```
 
 The runner tests that need dPASP skip themselves when it is not importable,

@@ -12,6 +12,7 @@ file is useful in a checkout that only runs the mock target.
 import importlib
 import json
 import os
+import resource
 import subprocess
 import sys
 
@@ -194,3 +195,103 @@ def test_the_worker_is_a_separate_process():
         text=True,
     )
     assert out.stdout.strip().endswith("False"), out.stdout + out.stderr
+
+
+# --------------------------------------------------------------------------
+# Resource limits
+#
+# These exist because of a real failure: the limit was originally RLIMIT_AS,
+# which broke `import torch` inside the runner with
+# "libtorch_python.so: failed to map segment from shared object".
+# --------------------------------------------------------------------------
+
+def limits_in_child(mem_limit_mb):
+    """Run apply_limits in a fresh process and report the resulting rlimits."""
+    probe = (
+        "import json, resource, sys;"
+        "sys.path.insert(0, %r);"
+        "import runner_worker;"
+        "runner_worker.apply_limits(%d);"
+        "print(json.dumps({"
+        "'data': resource.getrlimit(resource.RLIMIT_DATA),"
+        "'addr': resource.getrlimit(resource.RLIMIT_AS),"
+        "'core': resource.getrlimit(resource.RLIMIT_CORE)}))"
+        % (os.path.dirname(os.path.abspath(__file__)), mem_limit_mb)
+    )
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
+def test_the_heap_is_capped_not_the_address_space():
+    limits = limits_in_child(512)
+
+    assert limits["data"][0] == 512 * 1024 * 1024
+    # The crux: bounding the address space breaks loading big shared
+    # libraries, so it must be left alone.
+    assert limits["addr"][0] == resource.RLIM_INFINITY
+
+
+def test_core_dumps_are_disabled():
+    assert limits_in_child(512)["core"] == [0, 0]
+
+
+def test_a_zero_limit_leaves_the_heap_alone():
+    limits = limits_in_child(0)
+    assert limits["data"][0] == resource.RLIM_INFINITY
+
+
+def test_the_heap_cap_actually_bites():
+    """A runaway allocation must fail, and fail as a clean MemoryError."""
+    probe = (
+        "import sys; sys.path.insert(0, %r);"
+        "import runner_worker; runner_worker.apply_limits(256);"
+        "\ntry:\n"
+        "    x = bytearray(1024 * 1024 * 1024)\n"
+        "    print('ALLOCATED')\n"
+        "except MemoryError:\n"
+        "    print('MEMORYERROR')\n" % os.path.dirname(os.path.abspath(__file__))
+    )
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
+    assert out.stdout.strip() == "MEMORYERROR", out.stdout + out.stderr
+
+
+def test_a_large_shared_library_still_loads_under_the_cap():
+    """The regression itself: a big extension must load despite the cap.
+
+    numpy stands in for torch — it is a dPASP dependency, and importing it
+    maps about 137 MB of address space while needing far less heap. The cap
+    here is deliberately below that virtual size, so this test fails if the
+    limit is ever switched back to RLIMIT_AS, which is what produced
+
+        libtorch_python.so: failed to map segment from shared object
+    """
+    probe = (
+        "import sys; sys.path.insert(0, %r);"
+        "import runner_worker; runner_worker.apply_limits(128);"
+        "import numpy; print('IMPORTED', numpy.__version__)"
+        % os.path.dirname(os.path.abspath(__file__))
+    )
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
+    assert out.stdout.startswith("IMPORTED"), out.stdout + out.stderr
+
+
+@needs_pasp
+def test_dpasp_imports_under_the_cap():
+    """dPASP itself, which imports torch when it is installed."""
+    probe = (
+        "import sys; sys.path.insert(0, %r);"
+        "import runner_worker; runner_worker.apply_limits(%d);"
+        "import pasp; print('IMPORTED', pasp.__version__)"
+        % (os.path.dirname(os.path.abspath(__file__)), runner_worker.DEFAULT_MEM_LIMIT_MB)
+    )
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
+    assert "IMPORTED" in out.stdout, out.stdout + out.stderr
+
+
+@needs_pasp
+def test_a_real_run_succeeds_under_the_default_cap():
+    """End to end at the shipped default, the configuration users actually get."""
+    result = dpasp_api.run_program("stable", "credal", EARTHQUAKE)
+    assert result["ok"] is True, result["error"]
+    assert result["queries"][1]["lower"] == pytest.approx(0.58, abs=1e-9)
