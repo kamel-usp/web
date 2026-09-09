@@ -105,20 +105,48 @@ class containerManager:
         # only exercise PriorityQueue — unimportable without a running daemon.
         self.docker_api = docker_api if docker_api is not None else dockerApi()
         self.container_lifetime = lifetime
+        self.pre_allocate = pre_allocate
         self.lifetime_pq = PriorityQueue()
         self.user_id_to_container_id = dict()
-
-        self.docker_api.build_image();
-
-        # Runner containers from a previous run of this process are orphans:
-        # the registry above lives only in memory. Clear them before
-        # pre-allocating, so restarts do not leave containers behind holding
-        # endpoints on the `dpasp-instances` network.
-        if hasattr(self.docker_api, "removeStaleContainers"):
-            self.docker_api.removeStaleContainers()
-
         self.pre_allocated_containers = deque()
-        asyncio.create_task(self.allocContainers(pre_allocate))
+
+        # Readiness, reported by the HTTP layer. `__init__` deliberately does
+        # no Docker work at all: see `start`.
+        self.ready = False
+        self.startup_error = None
+
+    async def start(self):
+        """Build the runner image and fill the pool.
+
+        Kept out of `__init__` on purpose. Uvicorn does not bind its listening
+        socket until the lifespan's startup completes, so building the image
+        during startup made the whole container-manager API refuse
+        connections for as long as the build took — minutes on a cold cache,
+        since the runner image compiles dPASP and downloads PyTorch. The
+        frontend saw `ECONNREFUSED` instead of a message it could show.
+
+        Awaited as a background task, so the API answers immediately and can
+        report that it is still warming up. `build_image` is synchronous, so
+        it goes to a worker thread rather than blocking the event loop.
+        """
+        try:
+            await asyncio.to_thread(self.docker_api.build_image)
+
+            # Runner containers from a previous run of this process are
+            # orphans: the registry above lives only in memory. Clear them
+            # before pre-allocating, so restarts do not leave containers
+            # behind holding endpoints on the `dpasp-instances` network.
+            if hasattr(self.docker_api, "removeStaleContainers"):
+                await asyncio.to_thread(self.docker_api.removeStaleContainers)
+
+            await self.allocContainers(self.pre_allocate)
+            self.ready = True
+            print("Container manager ready", flush=True)
+        except Exception as e:
+            # Recorded rather than raised: this runs detached, and the HTTP
+            # layer is what surfaces it to the user.
+            self.startup_error = f"{type(e).__name__}: {e}"
+            print(f"Container manager failed to start: {self.startup_error}", flush=True)
 
     def activeContainerCount(self):
         return len(self.user_id_to_container_id)
@@ -135,7 +163,16 @@ class containerManager:
             return self.user_id_to_container_id[user_id]
         else:
             asyncio.create_task(self.allocContainers(1))
-            container_id = self.pre_allocated_containers.popleft()
+
+            if self.pre_allocated_containers:
+                container_id = self.pre_allocated_containers.popleft()
+            else:
+                # The pool is empty: a burst of new users can outrun the
+                # refill above. This used to `popleft()` unconditionally and
+                # raise IndexError, failing the request outright; spawning one
+                # on demand just makes this user wait for it instead.
+                container_id = await asyncio.to_thread(self.docker_api.createContainer)
+
             self.user_id_to_container_id[user_id] = container_id
 
             self.lifetime_pq.insert(

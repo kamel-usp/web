@@ -1,5 +1,13 @@
 import { env } from '$env/dynamic/private';
 
+/** Raised with the container manager's own explanation, when it gives one. */
+export class RunnerUnavailable extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RunnerUnavailable';
+  }
+}
+
 /**
  * Asks the container manager for the runner container assigned to a user and
  * returns its base URL on the `dpasp-instances` network.
@@ -16,14 +24,38 @@ import { env } from '$env/dynamic/private';
 export async function get_user_dpasp_runner_url(userid: string): Promise<string> {
   if (env.DPASP_RUNNER_URL) return env.DPASP_RUNNER_URL.replace(/\/+$/, '');
 
-  const cm_response = await fetch(`http://container-manager/container_for_user/${userid}`);
-
-  if (!cm_response.ok) {
-    throw new Error(`container-manager replied ${cm_response.status} for user ${userid}`);
+  let response: Response;
+  try {
+    response = await fetch(`http://container-manager/container_for_user/${userid}`);
+  } catch (e) {
+    // The manager is unreachable rather than unhappy. While it builds the
+    // runner image it is not yet listening at all, because uvicorn binds its
+    // socket only after startup finishes.
+    throw new RunnerUnavailable(
+      'The container manager is not answering yet. If the stack has just been ' +
+        'started it is probably still building the dPASP runner image, which ' +
+        'takes several minutes the first time. Check: ' +
+        'docker compose logs -f container-manager'
+    );
   }
 
-  const { id } = (await cm_response.json()) as { id: string };
-  if (!id) throw new Error('container-manager returned no container id');
+  if (!response.ok) {
+    // 503 carries the manager's own explanation — pass it through rather than
+    // replacing it with a generic message.
+    let detail = '';
+    try {
+      const body = await response.json();
+      if (body && typeof body.error === 'string') detail = body.error;
+    } catch (e) {
+      /* no JSON body; fall back to the status */
+    }
+    throw new RunnerUnavailable(
+      detail || `The container manager replied ${response.status}.`
+    );
+  }
+
+  const { id } = (await response.json()) as { id: string };
+  if (!id) throw new RunnerUnavailable('The container manager returned no container id.');
 
   return `http://dpasp-instance-${id}`;
 }

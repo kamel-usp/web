@@ -18,12 +18,14 @@ class MockDocker:
     def __init__(self):
         self.created = 0
         self.deleted = []
+        self.builds = 0
+        self.sweeps = 0
 
     def build_image(self):
-        pass
+        self.builds += 1
 
     def removeStaleContainers(self):
-        pass
+        self.sweeps += 1
 
     def createContainer(self):
         self.created += 1
@@ -43,10 +45,10 @@ async def settle():
 def test_a_user_keeps_the_same_container():
     async def scenario():
         docker = MockDocker()
-        # Generous pre-allocation: `getContainer` pops from the deque without
-        # checking, so a starved pool raises IndexError (see README, Known
-        # gaps). This test is about identity, not that bug.
+        # Pre-allocated generously so that this test exercises identity
+        # rather than the on-demand spawn path.
         manager = containerManager(60, pre_allocate=20, docker_api=docker)
+        await manager.start()
         await settle()
 
         first = [await manager.getContainer(user) for user in range(5)]
@@ -67,6 +69,7 @@ def test_expired_containers_are_pruned():
         lifetime = 0.2
         docker = MockDocker()
         manager = containerManager(lifetime, pre_allocate=20, docker_api=docker)
+        await manager.start()
         await settle()
 
         expiring = [await manager.getContainer(user) for user in range(5)]
@@ -94,6 +97,7 @@ def test_stopping_everything_deletes_both_pools():
     async def scenario():
         docker = MockDocker()
         manager = containerManager(60, pre_allocate=4, docker_api=docker)
+        await manager.start()
         await settle()
 
         assigned = [await manager.getContainer(user) for user in range(2)]
@@ -104,5 +108,64 @@ def test_stopping_everything_deletes_both_pools():
 
         for container_id in assigned + pre_allocated:
             assert container_id in docker.deleted
+
+    asyncio.run(scenario())
+
+
+def test_construction_touches_no_docker():
+    """The constructor must do no Docker work.
+
+    Uvicorn binds its socket only after the lifespan's startup returns, so
+    anything slow here makes the whole API refuse connections. The image
+    build belongs in `start`, awaited in the background.
+    """
+    docker = MockDocker()
+    manager = containerManager(60, pre_allocate=2, docker_api=docker)
+
+    assert docker.builds == 0
+    assert docker.sweeps == 0
+    assert docker.created == 0
+    assert manager.ready is False
+
+    async def scenario():
+        await manager.start()
+        assert docker.builds == 1
+        assert docker.sweeps == 1
+        assert manager.ready is True
+
+    asyncio.run(scenario())
+
+
+def test_a_failed_startup_is_recorded_not_raised():
+    """A detached task cannot usefully raise; the HTTP layer reports this."""
+
+    class BrokenDocker(MockDocker):
+        def build_image(self):
+            raise RuntimeError("no such image")
+
+    async def scenario():
+        manager = containerManager(60, pre_allocate=1, docker_api=BrokenDocker())
+        await manager.start()  # must not raise
+
+        assert manager.ready is False
+        assert "no such image" in manager.startup_error
+
+    asyncio.run(scenario())
+
+
+def test_an_empty_pool_spawns_on_demand():
+    """A burst of new users used to hit IndexError on an empty deque."""
+
+    async def scenario():
+        docker = MockDocker()
+        manager = containerManager(60, pre_allocate=0, docker_api=docker)
+        await manager.start()
+
+        assert len(manager.pre_allocated_containers) == 0
+
+        container_id = await manager.getContainer("first-user")
+
+        assert container_id is not None
+        assert manager.activeContainerCount() == 1
 
     asyncio.run(scenario())

@@ -32,9 +32,14 @@ export async function POST({ params, request, locals }) {
 	try {
 		base = await get_user_dpasp_runner_url(user_id);
 	} catch (e) {
-		console.error('container-manager lookup failed:', e);
+		// `get_user_dpasp_runner_url` throws RunnerUnavailable carrying the
+		// container manager's own explanation (for instance that it is still
+		// building the runner image). Show that, rather than a guess.
+		console.error('container-manager lookup failed:', e instanceof Error ? e.message : e);
 		return runnerError(
-			'Could not obtain a dPASP runner for this session. The container manager may be starting up or out of capacity.',
+			e instanceof Error && e.name === 'RunnerUnavailable'
+				? e.message
+				: 'Could not obtain a dPASP runner for this session.',
 			503
 		);
 	}

@@ -61,6 +61,66 @@ DOCKER_SOCKET=$(docker context inspect -f '{{.Endpoints.docker.Host}}' \
   | sed 's|^unix://||')
 ```
 
+#### Where clingo comes from (and why not from apt)
+
+The runner image does **not** install clingo from a package repository.
+`ppa:potassco/stable` publishes clingo for amd64 and i386 only — there is no
+arm64 build, confirmed against the Launchpad API — so on an Apple Silicon Mac
+the PPA is added successfully and then:
+
+```
+E: Package 'clingo' has no installation candidate
+```
+
+Adding the repository is not the fix; no candidate exists for the
+architecture. Ubuntu's own universe clingo is too old for dPASP.
+
+Instead, the clingo **wheel** from PyPI supplies both sides of the
+dependency: it ships `clingo.h` and a shared object exporting the full clingo
+C API, and it publishes aarch64 wheels. The image installs it with pip, then
+presents it to the compiler through a conventional `-I`/`-l` layout under
+`/opt/clingo` and builds `pasp-plp` against that. Filenames embed the Python
+version and architecture (`_clingo.cpython-310-aarch64-linux-gnu.so`), so
+they are discovered at build time rather than hardcoded, and the runpath
+points at the wheel's own directory — the linker records that shared object's
+real name as the dependency, and that is exactly where it lives.
+
+`ppa:deadsnakes/ppa` is gone too: jammy ships Python 3.10 as its default
+`python3`, so the interpreter needed no PPA either. That removed
+`software-properties-common`, `python3-launchpadlib` and two `apt-get update`
+passes from the build.
+
+The image ends the dPASP stage by running a one-line program and asserting the
+answer, so a broken build fails during `docker compose build` rather than at
+a user's first query.
+
+#### The editor says it cannot obtain a runner, or the log shows `ECONNREFUSED`
+
+On a cold start this is expected for a few minutes, and the first build is the
+slow one: it compiles dPASP against clingo and downloads PyTorch. Watch it:
+
+```bash
+docker compose logs -f container-manager     # "Done building image!" when finished
+curl localhost:8001/health                   # {"status":"building"|"ready"|"error"}
+```
+
+The container manager builds the runner image during its own startup, but it
+no longer does so *inside* uvicorn's lifespan. Uvicorn binds its listening
+socket only after the lifespan's startup block returns, so building there made
+the whole API refuse connections for the duration — the frontend logged
+
+```
+container-manager lookup failed: TypeError: fetch failed
+  [cause]: Error: connect ECONNREFUSED 172.18.0.3:80
+```
+
+which says nothing about the real cause. The build is now awaited as a
+background task: the API answers immediately and returns `503` with an
+explanation while it warms up, and the editor displays that explanation.
+
+If `/health` reports `"status": "error"`, the build itself failed and `detail`
+carries the reason.
+
 #### `failed to set up container networking: network <id> not found`
 
 A leftover runner container is holding an endpoint on a network that no longer
@@ -213,8 +273,11 @@ as comments would hide the resulting syntax error instead of revealing it.
 cd web/editor && npm test              # 25 tests: the pasp tokenizer
 cd web/editor && npm run check         # svelte-check: 0 errors
 
-cd web/backend/dPaspRunner && python3 -m pytest    # 15: result format, limits
-cd web/backend/containerManager && python3 -m pytest  # 15: queue, lifecycle
+# backend tests need the test-only extras:
+#   cd web/backend && pip install -r requirements-dev.txt
+cd web/backend && python3 -m pytest test_main.py      #  6: startup, readiness
+cd web/backend/containerManager && python3 -m pytest  # 18: queue, lifecycle
+cd web/backend/dPaspRunner && python3 -m pytest       # 15: result format, limits
 ```
 
 The runner tests that need dPASP skip themselves when it is not importable,
@@ -284,9 +347,6 @@ docker compose down -v && docker compose --profile dpasp up --build
   lifetime. They are at least removed rather than left stopped now, and
   leftovers are swept at startup, but nothing enforces the lifetime while the
   manager runs.
-- **`getContainer` can raise.** It pops from `pre_allocated_containers`
-  without checking, so a burst of new users empties the deque and raises
-  `IndexError`.
 - **The container manager mounts the Docker socket**, which gives the web tier
   root-equivalent control of the host.
 - **Learning is untested here.** A `#learn` program is dispatched correctly
