@@ -12,9 +12,17 @@ services:
     ports:
       - 8001:80
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /usr/bin/docker:/usr/bin/docker
-      - /usr/lib/libdevmapper.so.1.02:/usr/lib/libdevmapper.so.1.02
+      # The container manager reaches the daemon through the Docker SDK for
+      # Python over this socket. It never shells out to the `docker` CLI, so
+      # neither the CLI binary nor libdevmapper needs mounting — and neither
+      # path exists on macOS, where Compose would silently bind an empty
+      # directory over them.
+      #
+      # Set DOCKER_SOCKET when the daemon's socket is somewhere else, as it is
+      # under colima. Put it in a `.env` file next to this file, or export it:
+      #   DOCKER_SOCKET=$(docker context inspect \
+      #     -f '{{.Endpoints.docker.Host}}' | sed 's|^unix://||')
+      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
 
   container-manager-mock:
     <<: *cm
@@ -39,8 +47,30 @@ services:
       - 8000:80
     volumes:
       - ./editor:/app
-    env_file:
-      - ./editor/.env
+      # Keeps the image's node_modules from being shadowed by the bind mount
+      # above. Without it the mounted source tree (which has no node_modules)
+      # hid the installed tree, which is why the dev container had to run
+      # `npm install` — and print its deprecation and version notices — on
+      # every start.
+      #
+      # After changing package.json, refresh the image and this volume:
+      #   docker compose down -v && docker compose --profile dpasp up --build
+      - editor_node_modules:/app/node_modules
+    # OAuth is optional: with none of these set, every visitor gets an
+    # anonymous session and the sign-in link is hidden. To enable it, put the
+    # values in a `.env` file next to this compose file (Compose reads it
+    # automatically) — see editor/.env.example for what they mean.
+    environment:
+      AUTH_SECRET: ${AUTH_SECRET:-}
+      GITHUB_ID: ${GITHUB_ID:-}
+      GITHUB_SECRET: ${GITHUB_SECRET:-}
+      GOOGLE_ID: ${GOOGLE_ID:-}
+      GOOGLE_SECRET: ${GOOGLE_SECRET:-}
+
+volumes:
+  # Holds the frontend's installed node_modules across restarts; see the
+  # frontend service's volumes for why it exists.
+  editor_node_modules:
 
 networks:
   cm:

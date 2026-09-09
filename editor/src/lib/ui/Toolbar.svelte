@@ -1,132 +1,143 @@
-<script>
-	import {
-		Toolbar,
-		ToolbarButton,
-		Button,
-		Dropdown,
-		Radio,
-	} from "flowbite-svelte";
-	import { PlayOutline, ChevronDownSolid } from "flowbite-svelte-icons";
-	import { currentFile, currentFileContent, editorTerminal, ref } from "$lib/stores/editor";
-	import { get } from "svelte/store";
-	import { Spinner } from "flowbite-svelte";
+<script lang="ts">
+  import { Toolbar, ToolbarButton, Button, Dropdown, Radio, Spinner } from 'flowbite-svelte';
+  import { PlayOutline, ChevronDownSolid } from 'flowbite-svelte-icons';
+  import { currentFile, currentFileContent, runResult, running } from '$lib/stores/editor';
+  import type { RunResult } from '$lib/types';
 
-	let submitting = false;
-	let inf = "1000000";
+  interface OptionGroup {
+    label: string;
+    values: string[];
+    /** Index of the selected value. */
+    index: number;
+  }
 
-	async function uploadFile(filename, content) {
-		const response = await fetch("/api/instance/blob/upload", {
-			method: "POST",
-			body: JSON.stringify({ filename, content }),
-			headers: {
-				"content-type": "application/json",
-			},
-		});
-		currentFileContent.set(content);
-	}
+  // Kept in sync with SEMANTICS/PSEMANTICS in backend/dPaspRunner/main.py.
+  let groups: OptionGroup[] = [
+    { label: 'Semantics', values: ['stable', 'partial', 'lstable', 'smproblog'], index: 0 },
+    { label: 'PSemantics', values: ['credal', 'maxent'], index: 0 }
+  ];
 
-	function interpolateResult(code, result) {
-		while (result.includes("inf")) {
-			result = result.replace("inf", inf)
-		}
-		try {
-			result = JSON.parse(result);
-			let result_comment = "% RESULT: ";
-			let lines = code.split("\n").filter((line) => !line.startsWith(result_comment));
-			let cur_result = 0;
-			for (let i = 0; i < lines.length; i++) {
-				if (lines[i].match(/^[:whitespace:]*#query/g)) {
-					lines[i] += "\n" + result_comment + result[cur_result];
-					cur_result++;
-				}
-			}
-			let ans = lines.join ("\n");
-			while (ans.includes(inf)) {
-				ans = ans.replace(inf, "inf")
-			}
-			return ans;
-		} catch (e) {
-			return "Erro: \n" + result;
-		}
-	}
+  $: sem = groups[0].values[groups[0].index];
+  $: psem = groups[1].values[groups[1].index];
 
-	async function submit() {
-		const filename = $currentFile
-		const content = $currentFileContent
-		ref.update((n) => n + 1);
+  function select(group: OptionGroup, index: number) {
+    group.index = index;
+    groups = groups;
+  }
 
-		submitting = true;
-		
-		const code = content == undefined ? "" : content + "\n";
-		const sem = semantic_options["Semantics"][selected_semantics["Semantics"]]
-		const psem = semantic_options["PSemantics"][selected_semantics["PSemantics"]]
-		
-		const response = await fetch("/api/instance/run", {
-			method: "POST",
-			body: JSON.stringify({ sem, psem, code }),
-			headers: {
-				"content-type": "application/json",
-			},
-		});
-		
-		let res = await response.json();
+  /** Persists the buffer so a run always executes what is on screen. */
+  async function saveCurrentFile() {
+    const filename = $currentFile;
+    if (!filename) return;
+    await fetch('/api/instance/blob/upload', {
+      method: 'POST',
+      body: JSON.stringify({ filename, content: $currentFileContent ?? '' }),
+      headers: { 'content-type': 'application/json' }
+    });
+  }
 
-		let newResult = interpolateResult(code, res.result);
-		if (newResult.startsWith("Erro:")) {
-			editorTerminal.set ("> " + newResult);
-		}
-		else {
-			uploadFile(filename, newResult);
-		}
-		submitting = false;
-	}
+  async function submit() {
+    if ($running) return;
+    running.set(true);
+    try {
+      await saveCurrentFile();
 
-	const semantic_options = {
-		 "Semantics": [
-			"stable",
-			"partial",
-			"lstable",
-		 ],
-		 "PSemantics": [
-			"credal",
-			"maxent",
-		 ]
-	}
+      const code = ($currentFileContent ?? '') + '\n';
 
-	let selected_semantics = {}
-	for (let k in semantic_options) {
-		selected_semantics[k] = 0
-	}
+      const response = await fetch('/api/instance/run', {
+        method: 'POST',
+        body: JSON.stringify({ sem, psem, code }),
+        headers: { 'content-type': 'application/json' }
+      });
+
+      // The runner reports faulty programs in the body with `ok: false`, and
+      // the proxy reports gateway problems in the same shape, so the body is
+      // worth reading even on a non-2xx status.
+      let payload: RunResult | null = null;
+      try {
+        payload = await response.json();
+      } catch (e) {
+        payload = null;
+      }
+
+      if (payload && typeof payload === 'object' && 'queries' in payload) {
+        runResult.set(payload);
+      } else {
+        runResult.set(
+          transportError(
+            sem,
+            psem,
+            response.ok
+              ? 'The runner returned a response that was not valid JSON.'
+              : `The runner replied ${response.status}.`
+          )
+        );
+      }
+    } catch (e) {
+      runResult.set(transportError(sem, psem, String(e)));
+    } finally {
+      running.set(false);
+    }
+  }
+
+  function transportError(sem: string, psem: string, message: string): RunResult {
+    return {
+      ok: false,
+      sem,
+      psem,
+      interval: psem === 'credal',
+      learned: false,
+      elapsed_ms: 0,
+      queries: [],
+      output: '',
+      error: {
+        kind: 'internal',
+        type: 'TransportError',
+        message: `${message}\n\nThe dPASP runner may still be starting up. Try again in a moment.`
+      }
+    };
+  }
 </script>
 
-
 <Toolbar>
-	<div class="flex-container">
-		{#each Object.entries(semantic_options) as [sem, types] }
-			<Button class="dark:bg-gray-900 text-primary-500 dark:hover:bg-gray-700">
-				{sem}: {types[selected_semantics[sem]]}<ChevronDownSolid class="w-3 h-3 ml-2 text-white dark:text-white" />
-			</Button>
-			<Dropdown class="w-44 p-3 space-y-3 text-sm">
-				{#each types.keys() as sem_ind}
-					<li>
-						<Radio name={sem} on:click={() => {selected_semantics[sem] = sem_ind;}}>{types[sem_ind]}</Radio>
-					</li>
-				{/each}
-			</Dropdown>
-		{/each}
-	</div>
-	<ToolbarButton name="send" slot="end" color="green" on:click={submit}>
-		{#if submitting == false}
-			<PlayOutline class="w-5 h-5" />
-		{:else}
-			<Spinner class="w-5 h-5" size={6} />
-		{/if}
-	</ToolbarButton>
+  <div class="flex-container">
+    {#each groups as group}
+      <Button class="dark:bg-gray-900 text-primary-500 dark:hover:bg-gray-700">
+        {group.label}: {group.values[group.index]}
+        <ChevronDownSolid class="w-3 h-3 ml-2 text-white dark:text-white" />
+      </Button>
+      <Dropdown class="w-44 p-3 space-y-3 text-sm">
+        {#each group.values as value, index}
+          <li>
+            <Radio
+              name={group.label}
+              checked={group.index === index}
+              on:click={() => select(group, index)}>{value}</Radio
+            >
+          </li>
+        {/each}
+      </Dropdown>
+    {/each}
+  </div>
+  <ToolbarButton
+    name="run"
+    slot="end"
+    color="green"
+    disabled={$running}
+    on:click={submit}
+    title="Run the program"
+  >
+    {#if $running}
+      <Spinner class="w-5 h-5" size={6} />
+    {:else}
+      <PlayOutline class="w-5 h-5" />
+    {/if}
+  </ToolbarButton>
 </Toolbar>
 
 <style>
-	.flex-container {
-		display: flex;
-		gap: 20px;
-	}
+  .flex-container {
+    display: flex;
+    gap: 20px;
+  }
 </style>

@@ -1,51 +1,43 @@
-// https://stackoverflow.com/questions/1349404/generate-random-string-characters-in-javascript
-export function makeid(length: number) : string {
-  let result = '';
-  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  const charactersLength = characters.length;
-  let counter = 0;
-  while (counter < length) {
-    result += characters.charAt(Math.floor(Math.random() * charactersLength));
-    counter += 1;
-  }
-  return result;
+/**
+ * Derivation of the identifier the container manager keys a runner on.
+ *
+ * This runs on the server (from `hooks.server.ts`) rather than in the browser.
+ * It used to be done in `onMount`, which meant the very first API call of a
+ * visit was made before the cookie existed, and so arrived without an id.
+ */
+
+/** Hex encoding of a byte buffer. */
+function toHex(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
-export async function hashid(message: string) : Promise<ArrayBuffer> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(message);
-  const hash = await crypto.subtle.digest('SHA-256', data);
-  return hash;
+/** SHA-256 of a string, hex encoded. */
+export async function hashId(message: string): Promise<string> {
+  const data = new TextEncoder().encode(message);
+  return toHex(await crypto.subtle.digest('SHA-256', data));
 }
 
-// https://stackoverflow.com/a/40031979/9014097
-function buf2hex(buffer) { // buffer is an ArrayBuffer
-  return Array.prototype.map.call(new Uint8Array(buffer), x => ('00' + x.toString(16)).slice(-2)).join('');
+/** A fresh opaque identifier for an anonymous visitor. */
+export function randomId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return toHex(bytes.buffer);
 }
 
-function getCookie(cookieName) {
-  const cookies = document.cookie.split(';');
-
-  for (let i = 0; i < cookies.length; i++) {
-    const cookie = cookies[i].trim();
-    if (cookie.startsWith(cookieName + '=')) return cookie.substring(cookieName.length + 1);
-  }
-  // Return null if the cookie is not found
-  return null;
-}
-
-export async function setSessionID(page) {
-  let id;
-  if (page.data.session == null) {
-    if (getCookie ("fallback_user_id") == null) {
-      let rng = await hashid(makeid (24));
-      document.cookie = `fallback_user_id=${buf2hex(rng)}`;
-    }
-    id = getCookie ("fallback_user_id");
-  }
-  else {
-    id = await hashid(page.data?.session?.user.email);
-    id = buf2hex(id);
-  }
-  document.cookie = `user_id=${id}`;
+/**
+ * The identifier for this request.
+ *
+ * A signed-in user gets a stable id derived from their email, so they return
+ * to the same workspace from any browser. Everyone else keeps whatever
+ * random id their cookie carries.
+ */
+export async function deriveUserId(
+  email: string | null | undefined,
+  existing: string | null | undefined
+): Promise<string> {
+  if (email) return hashId(email);
+  if (existing) return existing;
+  return randomId();
 }

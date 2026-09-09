@@ -1,53 +1,100 @@
 <script lang="ts">
-	import { SplitPane } from "@rich_harris/svelte-split-pane";
-	import CodeMirror from "svelte-codemirror-editor";
-	import { python } from "@codemirror/lang-python";
-	import { oneDark } from "@codemirror/theme-one-dark";
+  import { SplitPane } from '@rich_harris/svelte-split-pane';
+  import CodeMirror from 'svelte-codemirror-editor';
+  import { oneDark } from '@codemirror/theme-one-dark';
 
-	import Toolbar from "$lib/ui/Toolbar.svelte";
-	import Terminal from "$lib/ui/Terminal.svelte";
-	import FileBrowser from "$lib/ui/FileBrowser.svelte";
-	import { currentFile, currentFileContent } from "$lib/stores/editor";
-	const pageSize = "94vh";
+  import { pasp } from '$lib/lang/pasp';
+  import Toolbar from '$lib/ui/Toolbar.svelte';
+  import OutputPanel from '$lib/ui/OutputPanel.svelte';
+  import FileBrowser from '$lib/ui/FileBrowser.svelte';
+  import { currentFile, currentFileContent } from '$lib/stores/editor';
 
-	let fileBrowserComp;
+  let fileBrowserComp: FileBrowser;
 </script>
 
 <div class="page-container">
-	<SplitPane type="horizontal" min="10%" max="15%" id="top">
-		<section slot="a" id="browser">
-			<FileBrowser bind:this={fileBrowserComp} />
-		</section>
-		<section slot="b" id="ide">
-			<div id="codeMirror">
-			{#if $currentFile != ""}
-				<CodeMirror
-					bind:value={$currentFileContent}
-					lang={python()}
-					theme={oneDark}
-					on:change={fileBrowserComp.saveFile}
-				/>
-			{/if}
-			</div>
-		</section>
-	</SplitPane>
-	<Toolbar />
-	<Terminal />
+  <Toolbar />
+
+  <div class="workspace">
+    <SplitPane type="horizontal" min="120px" max="30%" pos="18%" id="shell">
+      <section slot="a" class="pane" id="browser">
+        <FileBrowser bind:this={fileBrowserComp} />
+      </section>
+
+      <section slot="b" class="pane">
+        <SplitPane type="vertical" min="25%" max="85%" pos="62%" id="editor-output">
+          <section slot="a" class="pane" id="code">
+            {#if $currentFile != ''}
+              <CodeMirror
+                bind:value={$currentFileContent}
+                lang={pasp()}
+                theme={oneDark}
+                on:change={fileBrowserComp?.saveFile}
+                styles={{
+                  '&': { height: '100%', fontSize: '13px' },
+                  '.cm-scroller': { overflow: 'auto' }
+                }}
+              />
+            {:else}
+              <p class="no-file">
+                Create or open a <code>.pasp</code> file to start writing a program.
+              </p>
+            {/if}
+          </section>
+
+          <section slot="b" class="pane">
+            <OutputPanel />
+          </section>
+        </SplitPane>
+      </section>
+    </SplitPane>
+  </div>
 </div>
 
 <style>
-	#codeMirror {
-		background-color: #242424;
-		min-height: 60vh;
-		max-height: 60vh;
-		overflow: auto;
-		position: relative;
-	}
-	.page-container {
-		display: flex;
-		flex-direction: column;
-    	height: 94vh; /* 100vh - navBarSize */
-		padding-top: 48px;
-	}
+  .page-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    /* Leaves room for the fixed navbar. */
+    padding-top: 48px;
+    box-sizing: border-box;
+  }
 
+  .workspace {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .pane {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #browser {
+    overflow: auto;
+  }
+
+  #code {
+    background-color: #282c34;
+  }
+
+  #code :global(.codemirror-wrapper) {
+    height: 100%;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .no-file {
+    margin: 16px;
+    color: #8a8a8a;
+    font-size: 13px;
+  }
+
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
 </style>

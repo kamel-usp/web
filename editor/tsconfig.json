@@ -3,6 +3,11 @@
 	"compilerOptions": {
 		"allowJs": true,
 		"checkJs": true,
+		// SvelteKit's generated config still sets the node10 resolver, which
+		// ignores the "exports" field and so cannot find the types of
+		// packages that only publish them there (svelte-codemirror-editor,
+		// among others). Vite resolves like a bundler, so match it.
+		"moduleResolution": "bundler",
 		"esModuleInterop": true,
 		"forceConsistentCasingInFileNames": true,
 		"resolveJsonModule": true,
