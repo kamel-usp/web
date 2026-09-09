@@ -251,10 +251,31 @@ FastAPI worker. Three reasons:
    deadline; an event-loop task cannot.
 3. A segfault in the C extension takes down only the child.
 
-Tunable through the environment: `DPASP_RUN_TIMEOUT` (default 30 s),
+Tunable through the environment: `DPASP_RUN_TIMEOUT` (default 300 s),
 `DPASP_RUN_MEM_MB` (default 1024), `DPASP_MAX_OUTPUT` (default 65536 chars).
 These sit inside the runner container and complement, not replace, whatever
 CPU and memory limits the container itself is given.
+
+Runner containers are created through the Docker API, not by Compose, so
+nothing would otherwise give them an environment — these three are forwarded
+from the container manager (`containerManager.RUNNER_ENV_KEYS`), which Compose
+passes them to. Override in a `.env` file next to `compose.yaml`:
+
+```
+DPASP_RUN_TIMEOUT=600
+```
+
+and restart. Only those three are forwarded; the container manager's own
+environment is not handed to containers that run user programs.
+
+A long deadline means the HTTP connection is held open for the whole run, so
+the proxy in front of the runner has to be willing to wait at least as long.
+Node's `fetch` is undici, whose `headersTimeout` defaults to **300 s** — the
+same as the run limit — so the two would race and a slow run could fail with
+`UND_ERR_HEADERS_TIMEOUT` instead of the runner's own timeout message.
+`editor/src/lib/runnerFetch.ts` therefore sets that timeout explicitly, 30 s
+above the run limit (`DPASP_PROXY_TIMEOUT_MS`, default 330000). If you raise
+`DPASP_RUN_TIMEOUT` past 300 s, raise this too.
 
 `DPASP_RUN_MEM_MB` bounds the **heap** (`RLIMIT_DATA`), deliberately not the
 address space (`RLIMIT_AS`). The two are very different for a process that
@@ -274,6 +295,42 @@ size from 14 MB to 464 MB, and numpy alone maps about 137 MB.
 and it fails cleanly as a `MemoryError`. If a legitimate program needs more
 than 1 GB of heap, raise `DPASP_RUN_MEM_MB` rather than reaching for
 `RLIMIT_AS`.
+
+## Files, and the editor's line limit
+
+Uploaded files land in the runner's blob folder, which is the working
+directory of every run, and appear in the panel on the left. A program can
+therefore read one by its bare name — `#learn "elmo.csv"`, or `open("x.csv")`
+inside a `#python` block.
+
+Data files are routinely far larger than anything a text editor should try to
+show, so **the editor opens at most 1000 lines** (`MAX_EDITOR_LINES` in
+`editor/src/lib/limits.ts`). `POST /blob/fetch` takes an optional `max_lines`
+and answers with the counts, so the cut is made in the runner rather than by
+sending megabytes of CSV to the browser first:
+
+```json
+{ "content": "…first 1000 lines…", "truncated": true,
+  "total_lines": 5001, "shown_lines": 1000, "bytes": 20025 }
+```
+
+A file opened this way is a **prefix**, and the editor treats it as one:
+
+- a banner above the buffer says how much is shown, of how much;
+- the editor is read-only, and nothing writes the buffer back — saving a
+  prefix over the file would delete everything past the cut, silently, which
+  for a data file means all of it;
+- the run button is disabled, because running the first 1000 lines of a
+  program is not running that program;
+- the whole file is still on the server and still read in full by any program
+  that opens it. That is the point of the banner's last sentence: truncation
+  is a display limit, not a data limit.
+
+An upload of more than 1000 lines says so as it lands, rather than waiting
+for the user to open the file and wonder.
+
+Omitting `max_lines` returns the file whole, which is what any other client
+of the endpoint gets.
 
 ## Syntax highlighting
 
@@ -295,17 +352,63 @@ COMMENT: "%" /[^\n]*/ NEWLINE
 so the parser rejects a block comment's continuation lines. Highlighting them
 as comments would hide the resulting syntax error instead of revealing it.
 
+## Example programs
+
+The "New file" dialog offers a **Start from** dropdown seeded with six
+programs, so a newcomer can run something real without typing it first:
+
+| File | Shows |
+| --- | --- |
+| `earthquake.pasp` | probabilistic facts and rules, conditional queries |
+| `insomnia.pasp` | the smallest program with non-degenerate credal bounds |
+| `coloring.pasp` | L-stable semantics and `undef` queries |
+| `prisoners.pasp` | interval-valued (credal) facts |
+| `learning.pasp` | learnable facts (`?::`) fitted to a CSV with `#learn` |
+| `digitsum.pasp` | `#python` blocks, neural rules and `#learn` |
+
+The sources live in `editor/src/lib/examples/` as ordinary `.pasp` files and
+are pulled in with Vite's `?raw`, rather than pasted into a TypeScript
+literal. That keeps them readable and editable. All but `learning.pasp` are
+currently byte-identical to their counterparts in the dPASP repository's own
+`examples/` directory — `coloring.pasp` is `3coloring.plp` and
+`digitsum.pasp` is `add_mnist.plp`, renamed only to match what the dialog
+calls them. Diff them against upstream when dPASP changes. `learning.pasp`
+comes from the [parameter-learning
+tutorial](https://kamel-usp.github.io/pages/learn_dpasp.html#learning-the-parameters-of-programs)
+and carries added comments.
+
+The first four run in about a second and reproduce their published figures.
+The other two are called out in the dialog when selected, rather than being
+left to look broken:
+
+* `learning.pasp` takes roughly 15 seconds and reads its CSV from a URL.
+  dPASP resolves that URL **while the program is parsed** (`path2obs` in
+  `pasp/grammar.py` calls `pandas.read_csv`), so an unreachable host fails
+  the run before any inference happens, and the runner needs outbound
+  network as long as the URL is left in place. The program's own comments
+  point at the better route: upload a copy with the file browser's upload
+  button and replace the URL with the bare file name, since programs run
+  with the uploaded-files folder as their working directory. That is also
+  what will keep working once the runner is network-isolated (see *Known
+  gaps*).
+* `digitsum.pasp` downloads MNIST and trains a network, so the first run may
+  exceed even the 5-minute limit while it fetches MNIST.
+
+Creating a file whose name already exists is refused, with the collision
+named. It used to overwrite silently.
+
 ## Tests
 
 ```bash
-cd web/editor && npm test              # 25 tests: the pasp tokenizer
+cd web/editor && npm test              # 59 tests: pasp tokenizer, examples, limits
 cd web/editor && npm run check         # svelte-check: 0 errors
 
 # backend tests need the test-only extras:
 #   cd web/backend && pip install -r requirements-dev.txt
 cd web/backend && python3 -m pytest test_main.py      #  6: startup, readiness
-cd web/backend/containerManager && python3 -m pytest  # 18: queue, lifecycle
-cd web/backend/dPaspRunner && python3 -m pytest       # 22: result format, limits
+cd web/backend/containerManager && python3 -m pytest  # 22: queue, lifecycle, env
+cd web/backend/dPaspRunner && python3 -m pytest       # 37: result format, limits,
+                                                      #     blob endpoints
 ```
 
 The runner tests that need dPASP skip themselves when it is not importable,
@@ -382,5 +485,15 @@ docker compose down -v && docker compose --profile dpasp up --build
   result format reports it only through the `learned` flag.
 - **CSV files are uploaded but not otherwise interpreted.** They land in the
   runner's blob folder, which is the working directory for a run, so a
-  `#python` block can open one by its bare name. There is no schema
-  inspection or preview.
+  `#learn` directive or a `#python` block can open one by its bare name.
+  There is no schema inspection or preview, and the file browser shows names
+  only — no sizes or row counts.
+- **A file over 1000 lines is read-only in the editor.** That is the safe
+  behaviour, not the desirable one: a long *program* cannot be edited here at
+  all. Making it editable means saving the edited head back over only the
+  head, which needs a range-aware write on the runner rather than the
+  whole-file `POST /blob/upload` that exists.
+- **Uploads travel as one JSON string.** `submitUploadFile` reads the file
+  with `File.text()` and posts it as `{filename, content}`, so a very large
+  upload is held in memory three times over and is subject to whatever body
+  limit the proxy and uvicorn impose. Multipart streaming would be the fix.

@@ -192,3 +192,64 @@ def test_stale_sweep_tolerates_an_unreachable_daemon(capsys):
     api.removeStaleContainers()
 
     assert "Could not list stale containers" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# Runner environment
+#
+# Runner containers are not Compose services, so this forwarding is the only
+# way to configure them without editing dPaspRunner/Dockerfile. Before it
+# existed, DPASP_RUN_TIMEOUT could not be set at all — which the README
+# nevertheless told people to do.
+# --------------------------------------------------------------------------
+
+def test_runner_settings_are_forwarded(monkeypatch):
+    monkeypatch.setenv("DPASP_RUN_TIMEOUT", "300")
+    monkeypatch.setenv("DPASP_RUN_MEM_MB", "2048")
+    monkeypatch.setenv("DPASP_MAX_OUTPUT", "1234")
+
+    api = api_with(FakeClient(FakeContainers()))
+
+    assert api.runnerEnvironment() == {
+        "DPASP_RUN_TIMEOUT": "300",
+        "DPASP_RUN_MEM_MB": "2048",
+        "DPASP_MAX_OUTPUT": "1234",
+    }
+
+
+def test_unset_settings_are_omitted(monkeypatch):
+    # Omitted rather than passed as "", so the runner's own defaults apply.
+    for key in dockerApi.RUNNER_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("DPASP_RUN_TIMEOUT", "")
+
+    api = api_with(FakeClient(FakeContainers()))
+
+    assert api.runnerEnvironment() == {}
+
+
+def test_unrelated_variables_are_not_forwarded(monkeypatch):
+    # The container manager's own environment holds the Docker socket, the
+    # runner target and whatever else the host has; none of it belongs in a
+    # container that runs user programs.
+    for key in dockerApi.RUNNER_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("RUNNER_TARGET", "dpasp")
+    monkeypatch.setenv("AUTH_SECRET", "hunter2")
+
+    api = api_with(FakeClient(FakeContainers()))
+
+    assert api.runnerEnvironment() == {}
+
+
+def test_created_containers_receive_the_settings(monkeypatch):
+    monkeypatch.setenv("DPASP_RUN_TIMEOUT", "300")
+    for key in ("DPASP_RUN_MEM_MB", "DPASP_MAX_OUTPUT"):
+        monkeypatch.delenv(key, raising=False)
+
+    containers = FakeContainers(FakeContainer())
+    api = api_with(FakeClient(containers))
+
+    api.createContainer()
+
+    assert containers.run_kwargs["environment"] == {"DPASP_RUN_TIMEOUT": "300"}

@@ -29,12 +29,41 @@ class dockerApi:
     #:     docker ps -aq --filter label=dpasp.role=runner | xargs -r docker rm -f
     RUNNER_LABELS = {"dpasp.role": "runner"}
 
+    #: Settings forwarded from this process's environment into every runner
+    #: container it creates.
+    #:
+    #: Runner containers are not Compose services, so nothing else gives them
+    #: an environment: without this, the knobs `dPaspRunner` reads could only
+    #: be changed by editing its Dockerfile. Compose passes these through to
+    #: the container manager, and the manager passes them on.
+    RUNNER_ENV_KEYS = (
+        "DPASP_RUN_TIMEOUT",
+        "DPASP_RUN_MEM_MB",
+        "DPASP_MAX_OUTPUT",
+    )
+
+    def runnerEnvironment(self) -> dict:
+        """The subset of `RUNNER_ENV_KEYS` actually set, for `containers.run`.
+
+        Unset keys are omitted rather than passed as empty strings, so that
+        the runner's own defaults apply.
+        """
+        return {
+            key: os.environ[key]
+            for key in dockerApi.RUNNER_ENV_KEYS
+            if os.environ.get(key)
+        }
+
     def createContainer(self):
         print("Spawning a container", flush=True)
+        environment = self.runnerEnvironment()
+        if environment:
+            print(f"Runner environment: {environment}", flush=True)
         container = self.client.containers.run(
             "dpasp-runner",  # Specify the Docker image to use
             detach=True,  # Run the container in detached mode
             labels=dockerApi.RUNNER_LABELS,
+            environment=environment,
         )
         print("A container was spawned", flush=True)
         net = self.client.networks.list(names="dpasp-instances")[0]

@@ -1,4 +1,5 @@
 import os
+from itertools import islice
 
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -75,17 +76,76 @@ async def list_blobs():
 
 class FileToRead(BaseModel):
     filename: str
+    #: When positive, return only the first `max_lines` lines. The editor asks
+    #: for a bounded prefix so that opening an uploaded data file does not send
+    #: megabytes of CSV through the proxy and into a text editor that cannot
+    #: usefully show it. `total_lines` still reports the real length.
+    max_lines: int = 0
 
 
 @app.post("/blob/fetch")
 async def fetch_blob(f: FileToRead):
+    """Return a file's text, optionally only its first `max_lines` lines.
+
+    Always reports `total_lines`, `shown_lines` and `bytes`, so a caller
+    showing a prefix can say how much it is hiding. A truncated `content`
+    holds exactly `shown_lines` lines with no trailing newline, so that a
+    text editor displaying it does not show a phantom final line.
+    """
     try:
         path = blob_path(f.filename)
+        size = os.path.getsize(path)
+
         with open(path, "r") as handle:
-            return {"content": handle.read()}
+            if f.max_lines <= 0:
+                content = handle.read()
+                return {
+                    "content": content,
+                    "truncated": False,
+                    "total_lines": _line_count(content),
+                    "shown_lines": _line_count(content),
+                    "bytes": size,
+                }
+
+            head = list(islice(handle, f.max_lines))
+            # Count the tail without holding it: this file may be far larger
+            # than anything worth loading into memory to answer a fetch.
+            tail = sum(1 for _ in handle)
+
+        content = "".join(head)
+        truncated = tail > 0
+        if truncated and content.endswith("\n"):
+            content = content[:-1]
+
+        return {
+            "content": content,
+            "truncated": truncated,
+            "total_lines": len(head) + tail,
+            "shown_lines": len(head),
+            "bytes": size,
+        }
     except (ValueError, OSError) as exc:
+        # UnicodeDecodeError is a ValueError, so a binary upload lands here
+        # rather than raising through the endpoint.
         print(f"/blob/fetch: {exc}")
-        return {"content": ""}
+        return {
+            "content": "",
+            "truncated": False,
+            "total_lines": 0,
+            "shown_lines": 0,
+            "bytes": 0,
+        }
+
+
+def _line_count(text: str) -> int:
+    """Physical lines in `text`, counting as file iteration does.
+
+    A trailing newline ends the last line rather than starting an empty one,
+    so "a\\nb\\n" and "a\\nb" are both two lines.
+    """
+    if not text:
+        return 0
+    return text.count("\n") + (0 if text.endswith("\n") else 1)
 
 
 class FileToDelete(BaseModel):

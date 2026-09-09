@@ -39,6 +39,7 @@
     "@lezer/highlight": "^1.2.0",
     "@rich_harris/svelte-split-pane": "^1.1.1",
     "flowbite-svelte-icons": "^0.4.4",
-    "svelte-codemirror-editor": "^1.1.0"
+    "svelte-codemirror-editor": "^1.1.0",
+    "undici": "^5.29.0"
   }
 }

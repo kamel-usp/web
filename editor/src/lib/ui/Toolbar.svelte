@@ -1,7 +1,14 @@
 <script lang="ts">
   import { Toolbar, ToolbarButton, Button, Dropdown, Radio, Spinner } from 'flowbite-svelte';
   import { PlayOutline, ChevronDownSolid } from 'flowbite-svelte-icons';
-  import { currentFile, currentFileContent, runResult, running } from '$lib/stores/editor';
+  import {
+    currentFile,
+    currentFileContent,
+    currentFileTruncation,
+    runResult,
+    running
+  } from '$lib/stores/editor';
+  import { formatCount } from '$lib/limits';
   import type { RunResult } from '$lib/types';
 
   interface OptionGroup {
@@ -29,6 +36,9 @@
   async function saveCurrentFile() {
     const filename = $currentFile;
     if (!filename) return;
+    // A truncated buffer is a prefix of the file; writing it back would
+    // delete the rest. `submit` refuses to run in that state anyway.
+    if ($currentFileTruncation) return;
     await fetch('/api/instance/blob/upload', {
       method: 'POST',
       body: JSON.stringify({ filename, content: $currentFileContent ?? '' }),
@@ -38,6 +48,25 @@
 
   async function submit() {
     if ($running) return;
+
+    // The run button is disabled in this state; this is the second guard,
+    // because running a prefix of a program silently answers the wrong
+    // question rather than failing.
+    const cut = $currentFileTruncation;
+    if (cut) {
+      runResult.set(
+        errorResult(
+          sem,
+          psem,
+          'TruncatedFile',
+          `${$currentFile} is open read-only: the editor is showing its first ` +
+            `${formatCount(cut.shownLines)} of ${formatCount(cut.totalLines)} lines. ` +
+            'Running that prefix would not be running this program.'
+        )
+      );
+      return;
+    }
+
     running.set(true);
     try {
       await saveCurrentFile();
@@ -80,7 +109,8 @@
     }
   }
 
-  function transportError(sem: string, psem: string, message: string): RunResult {
+  /** A failed-run body, so one renderer handles every way a run can fail. */
+  function errorResult(sem: string, psem: string, type: string, message: string): RunResult {
     return {
       ok: false,
       sem,
@@ -90,12 +120,17 @@
       elapsed_ms: 0,
       queries: [],
       output: '',
-      error: {
-        kind: 'internal',
-        type: 'TransportError',
-        message: `${message}\n\nThe dPASP runner may still be starting up. Try again in a moment.`
-      }
+      error: { kind: 'internal', type, message }
     };
+  }
+
+  function transportError(sem: string, psem: string, message: string): RunResult {
+    return errorResult(
+      sem,
+      psem,
+      'TransportError',
+      `${message}\n\nThe dPASP runner may still be starting up. Try again in a moment.`
+    );
   }
 </script>
 
@@ -119,13 +154,18 @@
       </Dropdown>
     {/each}
   </div>
+  <!-- flowbite gives a disabled ToolbarButton no styling of its own, so the
+       class below is what stops an unusable play button from looking ready. -->
   <ToolbarButton
     name="run"
     slot="end"
     color="green"
-    disabled={$running}
+    disabled={$running || $currentFileTruncation !== null}
+    class={$currentFileTruncation ? 'opacity-40 cursor-not-allowed' : ''}
     on:click={submit}
-    title="Run the program"
+    title={$currentFileTruncation
+      ? 'This file is too long to open whole, so only part of it is on screen. Running that part would not be running the program.'
+      : 'Run the program'}
   >
     {#if $running}
       <Spinner class="w-5 h-5" size={6} />

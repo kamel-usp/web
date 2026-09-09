@@ -1,7 +1,14 @@
 services:
   container-manager: &cm
     environment:
-      - RUNNER_TARGET=dpasp
+      RUNNER_TARGET: dpasp
+      # Forwarded into every runner container this creates (see
+      # containerManager.RUNNER_ENV_KEYS). Runner containers are not Compose
+      # services, so this is the only way to configure them without editing
+      # dPaspRunner/Dockerfile. Override in a `.env` next to this file.
+      DPASP_RUN_TIMEOUT: ${DPASP_RUN_TIMEOUT:-300}
+      DPASP_RUN_MEM_MB: ${DPASP_RUN_MEM_MB:-1024}
+      DPASP_MAX_OUTPUT: ${DPASP_MAX_OUTPUT:-65536}
     build:
       context: backend
       dockerfile: Dockerfile
@@ -29,7 +36,10 @@ services:
     profiles:
       - mock
     environment:
-      - RUNNER_TARGET=mock
+      RUNNER_TARGET: mock
+      DPASP_RUN_TIMEOUT: ${DPASP_RUN_TIMEOUT:-300}
+      DPASP_RUN_MEM_MB: ${DPASP_RUN_MEM_MB:-1024}
+      DPASP_MAX_OUTPUT: ${DPASP_MAX_OUTPUT:-65536}
     networks:
       cm:
         aliases:

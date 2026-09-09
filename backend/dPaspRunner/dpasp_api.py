@@ -41,9 +41,16 @@ import runner_worker
 
 IS_MOCK = os.getenv("MOCK") == "y"
 
-#: Wall-clock ceiling for one run. Grounding a program is not guaranteed to
-#: terminate in any reasonable time, so the deadline is not optional.
-RUN_TIMEOUT_S = float(os.getenv("DPASP_RUN_TIMEOUT", "30"))
+#: Wall-clock ceiling for one run, in seconds. Grounding a program is not
+#: guaranteed to terminate in any reasonable time, so the deadline is not
+#: optional.
+#:
+#: Five minutes by default, which is enough for the neural examples to train.
+#: Raising it further means keeping an HTTP connection open for the whole run:
+#: the SvelteKit proxy in front of this must be allowed to wait at least as
+#: long (see `RUNNER_FETCH_TIMEOUT_MS` in the editor's api.ts), and Node's
+#: default fetch gives up at 300 s, so the two are configured together.
+RUN_TIMEOUT_S = float(os.getenv("DPASP_RUN_TIMEOUT", "300"))
 
 #: Heap ceiling applied inside the worker, below the container's own memory
 #: limit so that the worker dies before the container is OOM-killed. This
@@ -59,7 +66,15 @@ WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runner_worker
 
 #: dPASP's progress bar redraws itself with carriage returns; strip it so the
 #: output pane does not fill with spinner frames.
-_PROGRESS_RE = re.compile(r"(?:Querying|Learning|Grounding|Counting)\s*:.*?(?:\r|$)")
+#: Two shapes occur: the query spinner redraws itself with carriage returns on
+#: a single line (`Querying: |`), while the learning bar emits one whole line
+#: per update (`Learning [===] ETA: 0h00m09s | LL=-5301.17`). Both are
+#: matched, and `MULTILINE` matters: without it `$` only matches the end of
+#: the whole string, so every learning frame but the last survived.
+_PROGRESS_RE = re.compile(
+    r"(?:Querying|Learning|Grounding|Counting)\s*[:\[].*?(?:\r|$)",
+    re.MULTILINE,
+)
 
 
 def clean_output(text: str) -> str:

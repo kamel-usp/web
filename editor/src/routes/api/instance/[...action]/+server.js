@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { get_user_dpasp_runner_url } from '$lib/api';
+import { runnerFetch, RUNNER_FETCH_TIMEOUT_MS } from '$lib/runnerFetch';
 
 /** Runner endpoints the browser is allowed to reach. */
 const ALLOWED = ['run', 'blob/upload', 'blob/list', 'blob/fetch', 'blob/delete'];
@@ -45,7 +46,9 @@ export async function POST({ params, request, locals }) {
 	}
 
 	try {
-		const response = await fetch(`${base}/${action}`, {
+		// runnerFetch, not fetch: a run may take the full DPASP_RUN_TIMEOUT,
+		// which exceeds Node's default 300 s header timeout.
+		const response = await runnerFetch(`${base}/${action}`, {
 			method: 'POST',
 			body,
 			headers: { 'content-type': 'application/json' }
@@ -58,6 +61,20 @@ export async function POST({ params, request, locals }) {
 		return json(await response.json());
 	} catch (e) {
 		console.error(`proxying ${action} failed:`, e);
+
+		// A headers timeout here means the proxy gave up before the runner
+		// did, so the runner's own timeout message never arrived. Say that,
+		// rather than claiming the runner was unreachable.
+		const code = /** @type {{cause?: {code?: string}}} */ (e)?.cause?.code;
+		if (code === 'UND_ERR_HEADERS_TIMEOUT' || code === 'UND_ERR_BODY_TIMEOUT') {
+			return runnerError(
+				`The run was still going after ${Math.round(RUNNER_FETCH_TIMEOUT_MS / 1000)} seconds` +
+					' and this proxy stopped waiting. Raise DPASP_PROXY_TIMEOUT_MS (and' +
+					' DPASP_RUN_TIMEOUT, which it must stay above) to allow longer runs.',
+				504
+			);
+		}
+
 		return runnerError('The dPASP runner could not be reached.', 502);
 	}
 }

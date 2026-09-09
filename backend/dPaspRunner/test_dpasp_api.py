@@ -295,3 +295,42 @@ def test_a_real_run_succeeds_under_the_default_cap():
     result = dpasp_api.run_program("stable", "credal", EARTHQUAKE)
     assert result["ok"] is True, result["error"]
     assert result["queries"][1]["lower"] == pytest.approx(0.58, abs=1e-9)
+
+
+# --------------------------------------------------------------------------
+# The run deadline
+# --------------------------------------------------------------------------
+
+def test_the_default_deadline_is_five_minutes():
+    assert dpasp_api.RUN_TIMEOUT_S == 300.0
+
+
+def test_the_deadline_is_configurable(monkeypatch):
+    # Set on the runner container by containerManager.runnerEnvironment,
+    # which forwards it from Compose.
+    monkeypatch.setenv("DPASP_RUN_TIMEOUT", "42.5")
+    importlib.reload(dpasp_api)
+    try:
+        assert dpasp_api.RUN_TIMEOUT_S == 42.5
+    finally:
+        monkeypatch.delenv("DPASP_RUN_TIMEOUT")
+        importlib.reload(dpasp_api)
+    assert dpasp_api.RUN_TIMEOUT_S == 300.0
+
+
+@needs_pasp
+def test_the_timeout_message_quotes_the_configured_deadline(monkeypatch):
+    monkeypatch.setattr(dpasp_api, "RUN_TIMEOUT_S", 2.0)
+    facts = "\n".join(f"0.5::p{i}." for i in range(30))
+    body = ", ".join(f"p{i}" for i in range(30))
+    result = dpasp_api.run_program("stable", "credal", f"{facts}\nq :- {body}.\n#query(q)\n")
+
+    assert result["error"]["kind"] == "timeout"
+    assert "2 seconds" in result["error"]["message"]
+
+
+def test_clean_output_drops_the_learning_bar():
+    # The learning bar writes `Learning [ ... ]`, not `Learning: ...`. Matching
+    # only the colon form let it leak into the output pane.
+    noisy = "Learning [        ] ETA: 0h00m00s | LL=0.00000\nreal output\n"
+    assert dpasp_api.clean_output(noisy) == "real output"
