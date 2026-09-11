@@ -1,0 +1,45 @@
+% Learning the parameters of a program from data.
+% From the dPASP tutorial:
+% https://kamel-usp.github.io/pages/learn_dpasp.html#learning-the-parameters-of-programs
+
+% Crime rate. The `?::` marks this probability as *learnable*: it starts
+% unknown and is fitted to the data by the #learn directive below.
+?::burglary.
+% Daily earthquake probabilities.
+0.05::earthquake(heavy); 0.15::earthquake(mild); 0.8::earthquake(none).
+% Error rates.
+0.90::alarm :- burglary, earthquake(heavy).
+0.85::alarm :- burglary, earthquake(mild).
+0.80::alarm :- burglary, earthquake(none).
+0.05::alarm :- not burglary, earthquake(mild).
+0.10::alarm :- not burglary, earthquake(heavy).
+% Help of neighbors.
+0.8::calls(X) :- alarm, neighbor(X).
+0.1::calls(X) :- not alarm, neighbor(X).
+% Bert and Ernie are Elmo's neighbors.
+neighbor(bert). neighbor(ernie).
+% What is the probability of a burglary at Elmo's?
+#query burglary.
+
+% We learn from a CSV containing Bert and Ernie's calls.
+%
+% Prefer your own uploaded copy of the file over this URL. Use the upload
+% button in the file browser on the left, then replace the URL below with just
+% the file name:
+%
+%     #learn "elmo.csv", niters = 10.
+%
+% Programs run with the uploaded-files folder as their working directory, so a
+% bare name is all that is needed. Three reasons to do it:
+%
+%   * The CSV is read while the program is being *parsed*, so an unreachable
+%     URL fails the whole run before any inference happens.
+%   * The runner container is meant to be locked down — once it has no
+%     outbound network, only uploaded files will work.
+%   * Your own data is the point. Swap in a CSV of your own with one column
+%     per observed atom (here `calls(bert)` and `calls(ernie)`) and one row
+%     per observation, holding 0 or 1.
+#learn "https://www.ime.usp.br/~renatolg/dpasp/elmo.csv", niters = 10.
+
+% Select the max-ent semantics.
+#semantics maxent.
