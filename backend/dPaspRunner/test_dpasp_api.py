@@ -200,25 +200,39 @@ def test_the_worker_is_a_separate_process():
 # --------------------------------------------------------------------------
 # Resource limits
 #
-# These exist because of a real failure: the limit was originally RLIMIT_AS,
-# which broke `import torch` inside the runner with
-# "libtorch_python.so: failed to map segment from shared object".
+# These exist because of two real failures, both of which showed up as
+# "<some library>.so: failed to map segment from shared object" while the
+# runner was loading dPASP:
+#
+#   1. the limit was originally RLIMIT_AS, which bounds address space and so
+#      bounds file-backed library mappings (broke `import torch`);
+#   2. RLIMIT_DATA was then applied *before* the imports, so the runtime's own
+#      loading had to fit inside the user's budget. On x86_64, where pip
+#      installs the CUDA build of torch, `import pasp` holds ~790 MB of data
+#      mappings — most of a 1024 MB budget (broke `libc10_cuda.so`).
 # --------------------------------------------------------------------------
 
+def run_probe(body):
+    """Run `body` in a fresh interpreter with runner_worker importable."""
+    probe = "import sys; sys.path.insert(0, %r)\n%s" % (
+        os.path.dirname(os.path.abspath(__file__)),
+        body,
+    )
+    return subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
+
+
 def limits_in_child(mem_limit_mb):
-    """Run apply_limits in a fresh process and report the resulting rlimits."""
-    probe = (
-        "import json, resource, sys;"
-        "sys.path.insert(0, %r);"
-        "import runner_worker;"
-        "runner_worker.apply_limits(%d);"
+    """Apply both limit sets in a fresh process and report the rlimits."""
+    out = run_probe(
+        "import json, resource, runner_worker\n"
+        "runner_worker.apply_process_limits()\n"
+        "runner_worker.apply_memory_limit(%d)\n"
         "print(json.dumps({"
         "'data': resource.getrlimit(resource.RLIMIT_DATA),"
         "'addr': resource.getrlimit(resource.RLIMIT_AS),"
-        "'core': resource.getrlimit(resource.RLIMIT_CORE)}))"
-        % (os.path.dirname(os.path.abspath(__file__)), mem_limit_mb)
+        "'core': resource.getrlimit(resource.RLIMIT_CORE),"
+        "'used': runner_worker.data_vm_bytes()}))" % mem_limit_mb
     )
-    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout)
 
@@ -226,10 +240,21 @@ def limits_in_child(mem_limit_mb):
 def test_the_heap_is_capped_not_the_address_space():
     limits = limits_in_child(512)
 
-    assert limits["data"][0] == 512 * 1024 * 1024
+    # The cap is the budget *plus* what the interpreter already holds, so it
+    # is above the budget but not far above it.
+    assert limits["data"][0] > 512 * 1024 * 1024
+    assert limits["data"][0] == pytest.approx(
+        limits["used"] + 512 * 1024 * 1024, abs=8 * 1024 * 1024
+    )
     # The crux: bounding the address space breaks loading big shared
     # libraries, so it must be left alone.
     assert limits["addr"][0] == resource.RLIM_INFINITY
+
+
+def test_the_baseline_is_measured_not_guessed():
+    """`data_vm_bytes` must read a real figure; 0 would silently make the
+    limit absolute again."""
+    assert limits_in_child(512)["used"] > 1024 * 1024
 
 
 def test_core_dumps_are_disabled():
@@ -243,21 +268,54 @@ def test_a_zero_limit_leaves_the_heap_alone():
 
 def test_the_heap_cap_actually_bites():
     """A runaway allocation must fail, and fail as a clean MemoryError."""
-    probe = (
-        "import sys; sys.path.insert(0, %r);"
-        "import runner_worker; runner_worker.apply_limits(256);"
-        "\ntry:\n"
-        "    x = bytearray(1024 * 1024 * 1024)\n"
+    out = run_probe(
+        "import runner_worker\n"
+        "runner_worker.apply_memory_limit(256)\n"
+        "try:\n"
+        "    x = bytearray(2 * 1024 * 1024 * 1024)\n"
         "    print('ALLOCATED')\n"
         "except MemoryError:\n"
-        "    print('MEMORYERROR')\n" % os.path.dirname(os.path.abspath(__file__))
+        "    print('MEMORYERROR')\n"
     )
-    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
     assert out.stdout.strip() == "MEMORYERROR", out.stdout + out.stderr
 
 
+def test_the_budget_is_on_top_of_what_is_already_held():
+    """The second regression, in miniature.
+
+    The 200 MB buffer stands in for what importing dPASP costs (on x86_64
+    with the CUDA torch build, ~790 MB). With an absolute limit, a 64 MB
+    budget applied afterwards would be *below* what is already held and the
+    next small allocation would fail — which is how loading a library came to
+    fail with "failed to map segment from shared object". The budget has to
+    be the program's allowance, not the process total.
+    """
+    out = run_probe(
+        "import runner_worker\n"
+        "runner_worker.apply_process_limits()\n"
+        "held = bytearray(200 * 1024 * 1024)\n"
+        "held[::4096] = b'x' * (len(held) // 4096)\n"
+        "runner_worker.apply_memory_limit(64)\n"
+        "try:\n"
+        "    small = bytearray(32 * 1024 * 1024)\n"
+        "    small[::4096] = b'x' * (len(small) // 4096)\n"
+        "    print('WITHIN-BUDGET-OK')\n"
+        "except MemoryError:\n"
+        "    print('WITHIN-BUDGET-FAILED')\n"
+        "try:\n"
+        "    huge = bytearray(512 * 1024 * 1024)\n"
+        "    huge[::4096] = b'x' * (len(huge) // 4096)\n"
+        "    print('OVER-BUDGET-ALLOWED')\n"
+        "except MemoryError:\n"
+        "    print('OVER-BUDGET-REFUSED')\n"
+    )
+    assert out.stdout.split() == ["WITHIN-BUDGET-OK", "OVER-BUDGET-REFUSED"], (
+        out.stdout + out.stderr
+    )
+
+
 def test_a_large_shared_library_still_loads_under_the_cap():
-    """The regression itself: a big extension must load despite the cap.
+    """A big extension must load even with a cap already in force.
 
     numpy stands in for torch — it is a dPASP dependency, and importing it
     maps about 137 MB of address space while needing far less heap. The cap
@@ -266,26 +324,38 @@ def test_a_large_shared_library_still_loads_under_the_cap():
 
         libtorch_python.so: failed to map segment from shared object
     """
-    probe = (
-        "import sys; sys.path.insert(0, %r);"
-        "import runner_worker; runner_worker.apply_limits(128);"
-        "import numpy; print('IMPORTED', numpy.__version__)"
-        % os.path.dirname(os.path.abspath(__file__))
+    out = run_probe(
+        "import runner_worker\n"
+        "runner_worker.apply_memory_limit(128)\n"
+        "import numpy; print('IMPORTED', numpy.__version__)\n"
     )
-    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
     assert out.stdout.startswith("IMPORTED"), out.stdout + out.stderr
 
 
 @needs_pasp
+def test_dpasp_imports_before_any_heap_cap_is_applied():
+    """The worker's actual order: imports first, budget afterwards.
+
+    dPASP imports torch at import time (`pasp/program.py`), and on x86_64
+    that is the CUDA build. Nothing may bound that.
+    """
+    source = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "runner_worker.py")).read()
+    body = source.split("def main()", 1)[1]
+    import_pos = body.index("import pasp")
+    limit_pos = body.index("apply_memory_limit(")
+    assert import_pos < limit_pos, "the heap cap must be applied after importing dPASP"
+
+
+@needs_pasp
 def test_dpasp_imports_under_the_cap():
-    """dPASP itself, which imports torch when it is installed."""
-    probe = (
-        "import sys; sys.path.insert(0, %r);"
-        "import runner_worker; runner_worker.apply_limits(%d);"
-        "import pasp; print('IMPORTED', pasp.__version__)"
-        % (os.path.dirname(os.path.abspath(__file__)), runner_worker.DEFAULT_MEM_LIMIT_MB)
+    """Belt and braces: even with the budget already in force, dPASP loads."""
+    out = run_probe(
+        "import runner_worker\n"
+        "runner_worker.apply_memory_limit(%d)\n"
+        "import pasp; print('IMPORTED', pasp.__version__)\n"
+        % runner_worker.DEFAULT_MEM_LIMIT_MB
     )
-    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
     assert "IMPORTED" in out.stdout, out.stdout + out.stderr
 
 

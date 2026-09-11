@@ -52,10 +52,13 @@ IS_MOCK = os.getenv("MOCK") == "y"
 #: default fetch gives up at 300 s, so the two are configured together.
 RUN_TIMEOUT_S = float(os.getenv("DPASP_RUN_TIMEOUT", "300"))
 
-#: Heap ceiling applied inside the worker, below the container's own memory
-#: limit so that the worker dies before the container is OOM-killed. This
-#: bounds `RLIMIT_DATA`; it is not an address-space limit, because bounding
-#: the address space breaks `import torch` (see runner_worker.apply_limits).
+#: Heap the user's program may allocate, in MB, enforced inside the worker so
+#: that it dies before the container is OOM-killed.
+#:
+#: It is a budget *on top of* what loading dPASP costs, not a ceiling on the
+#: whole process, and it bounds `RLIMIT_DATA` rather than the address space.
+#: Both of those are the result of real failures — see
+#: `runner_worker.apply_memory_limit`.
 RUN_MEM_LIMIT_MB = int(os.getenv("DPASP_RUN_MEM_MB", "1024"))
 
 #: Cap on captured program output, so that a program printing in a loop cannot

@@ -94,14 +94,34 @@ The image ends the dPASP stage by running a one-line program and asserting the
 answer, so a broken build fails during `docker compose build` rather than at
 a user's first query.
 
-#### `libtorch_python.so: failed to map segment from shared object`
+#### `…so: failed to map segment from shared object`
 
-The per-run memory limit was capping the virtual address space rather than the
-heap, so the dynamic loader could not map PyTorch. Fixed: the limit is now
-`RLIMIT_DATA`. See **Why the runner forks a process** for the details. If you
-see this again after changing `DPASP_RUN_MEM_MB`, that variable now bounds the
-heap and 1 GB is the default — the error means something re-introduced an
-address-space limit.
+The dynamic loader could not `mmap` part of a library while the runner was
+loading dPASP. Two different causes produced it here, both now fixed:
+
+- **`libtorch_python.so`** — the per-run memory limit capped the virtual
+  address space (`RLIMIT_AS`) rather than the heap. Address space includes
+  file-backed library mappings, and PyTorch maps far more of it than it uses.
+  The limit is `RLIMIT_DATA` now.
+- **`libc10_cuda.so`, on x86_64 only** — the heap limit was applied *before*
+  the runner imported dPASP, so the runtime's own loading had to fit inside
+  the user's budget. On x86_64 `pip install torch` installs the **CUDA**
+  build, and `import pasp` then holds about 790 MB of data mappings — most of
+  the 1024 MB default. On arm64 the wheel has no CUDA libraries, so the same
+  image was comfortably inside the budget: it failed on Linux/x86_64 and
+  worked on Apple Silicon. Two changes: the limit is applied *after* the
+  imports and counts only what the program itself allocates, and the image
+  now installs CPU-only torch (see the `TORCH_INDEX` build argument).
+
+Measured here with the CUDA build installed, importing dPASP with the limit
+applied first: 1024 MB works, 512 MB gives the message above, 256 MB
+**segfaults inside the dynamic loader** before Python can raise. With the
+limit applied afterwards, all three import cleanly and still refuse a
+runaway allocation.
+
+If it comes back, the question is what is bounding a mapping: check that
+nothing sets `RLIMIT_AS`, and that the heap budget is still applied after the
+imports rather than before.
 
 #### The editor says it cannot obtain a runner, or the log shows `ECONNREFUSED`
 
@@ -278,23 +298,42 @@ above the run limit (`DPASP_PROXY_TIMEOUT_MS`, default 330000). If you raise
 `DPASP_RUN_TIMEOUT` past 300 s, raise this too.
 
 `DPASP_RUN_MEM_MB` bounds the **heap** (`RLIMIT_DATA`), deliberately not the
-address space (`RLIMIT_AS`). The two are very different for a process that
-loads big shared libraries: `RLIMIT_AS` counts file-backed mappings, and
-importing PyTorch maps far more address space than it ever uses. Capping the
-address space therefore made the loader's `mmap` fail and every run die with
+address space (`RLIMIT_AS`), and it is applied **after** the worker has
+imported dPASP, as a budget on top of what that import costs. Both halves of
+that sentence are the result of a failure in production, and both show up the
+same way — as the dynamic loader failing to map a segment.
 
+`RLIMIT_AS` counts file-backed mappings, and importing PyTorch maps far more
+address space than it ever uses: measured here, `import pasp` with the CUDA
+build peaks at 3.2 GB of address space while holding 788 MB of data mappings.
+Capping the address space therefore made the loader's `mmap` fail and every
+run die with `libtorch_python.so: failed to map segment from shared object`.
+
+`RLIMIT_DATA` exempts those mappings — but applying it *before* the imports
+still put the loader inside the user's budget. That budget is not generous
+next to the CUDA build of torch, which needs ~790 MB of it just to import, so
+on x86_64 hosts the import itself hit the ceiling and died with
+`libc10_cuda.so: failed to map segment from shared object`. Our own runtime
+loading itself is not what the limit is for, so it is now applied afterwards:
+
+```python
+apply_process_limits()          # core dumps, stack — harmless to the loader
+import pasp                     # whatever it needs, it gets
+apply_memory_limit(budget_mb)   # RLIMIT_DATA = VmData + budget
 ```
-libtorch_python.so: failed to map segment from shared object
-```
 
-and at tighter limits it segfaults inside the dynamic loader before Python can
-raise anything. For scale, on this stack a 67 MB shared object took virtual
-size from 14 MB to 464 MB, and numpy alone maps about 137 MB.
+`DPASP_RUN_MEM_MB` is therefore what a *program* may allocate, not what the
+process may total. A runaway allocation still fails, cleanly, as a
+`MemoryError`. If a legitimate program needs more than 1 GB, raise the
+variable rather than reaching for `RLIMIT_AS`.
 
-`RLIMIT_DATA` exempts those mappings while still capping runaway allocation,
-and it fails cleanly as a `MemoryError`. If a legitimate program needs more
-than 1 GB of heap, raise `DPASP_RUN_MEM_MB` rather than reaching for
-`RLIMIT_AS`.
+The runner image installs **CPU-only** torch for the same reason, and because
+runner containers are created without `--gpus`: `torch.cuda.is_available()` is
+False whatever is installed, while the CUDA wheels cost about 4 GB of image
+and ~700 MB of data mappings. Build with
+`--build-arg TORCH_INDEX=https://pypi.org/simple` to get the default PyPI
+wheel back; the build falls back to it automatically if the CPU index has no
+wheel for the platform, and the runner works with either.
 
 ## Files, and the editor's line limit
 

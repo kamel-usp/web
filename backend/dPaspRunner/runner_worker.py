@@ -25,8 +25,8 @@ import resource
 import sys
 import time
 
-#: Heap ceiling for one run, in MB. Bounds `RLIMIT_DATA`, not the address
-#: space — see `apply_limits`.
+#: Heap one run may allocate, in MB, on top of what loading dPASP costs.
+#: Bounds `RLIMIT_DATA`, not the address space — see `apply_memory_limit`.
 DEFAULT_MEM_LIMIT_MB = 1024
 DEFAULT_STACK_LIMIT_MB = 64
 
@@ -35,36 +35,13 @@ DEFAULT_STACK_LIMIT_MB = 64
 OUTPUT_MARKER = "\x1e--dpasp-runner-ready--\x1e"
 
 
-def apply_limits(mem_limit_mb: int) -> None:
-    """Cap the child's heap and disable core dumps.
+def apply_process_limits() -> None:
+    """Disable core dumps and bound the stack.
 
-    A second line of defence *inside* the runner container, so that one
-    pathological program cannot exhaust the memory the container as a whole is
-    allowed. The container's own cgroup limits remain the primary control.
-
-    The cap is `RLIMIT_DATA` — the heap — and deliberately **not**
-    `RLIMIT_AS`. `RLIMIT_AS` bounds the whole virtual address space, which
-    includes file-backed mappings of shared libraries, and importing PyTorch
-    maps an enormous amount of address space without using anywhere near that
-    much memory. Under `RLIMIT_AS` the loader's `mmap` fails and `import
-    torch` dies with
-
-        libtorch_python.so: failed to map segment from shared object
-
-    or, if the limit is tighter still, segfaults in the dynamic loader before
-    Python can raise anything. For scale: on this stack a 67 MB shared object
-    pulled virtual size from 14 MB to 464 MB.
-
-    `RLIMIT_DATA` exempts file-backed mappings (since Linux 4.7 it covers brk
-    plus private anonymous mmap), so libraries load normally while a runaway
-    allocation still fails — and fails cleanly, as a `MemoryError`.
+    Neither of these interferes with loading libraries, so both are applied
+    before anything is imported. The heap limit is not: see
+    `apply_memory_limit`.
     """
-    if mem_limit_mb and mem_limit_mb > 0:
-        limit = mem_limit_mb * 1024 * 1024
-        try:
-            resource.setrlimit(resource.RLIMIT_DATA, (limit, limit))
-        except (ValueError, OSError):
-            pass
     try:
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     except (ValueError, OSError):
@@ -74,6 +51,76 @@ def apply_limits(mem_limit_mb: int) -> None:
         soft, hard = resource.getrlimit(resource.RLIMIT_STACK)
         if hard == resource.RLIM_INFINITY or hard >= stack:
             resource.setrlimit(resource.RLIMIT_STACK, (stack, hard))
+    except (ValueError, OSError):
+        pass
+
+
+def data_vm_bytes() -> int:
+    """Bytes of data mappings this process already holds (`VmData`).
+
+    This is the quantity `RLIMIT_DATA` bounds — brk plus private anonymous
+    mappings — so it is the right baseline to measure a program's allowance
+    from. Returns 0 where /proc is unavailable, which makes the limit
+    absolute again rather than failing.
+    """
+    try:
+        with open("/proc/self/status") as handle:
+            for line in handle:
+                if line.startswith("VmData:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0
+
+
+def apply_memory_limit(mem_limit_mb: int) -> None:
+    """Cap the heap the *user's program* may add, and only then.
+
+    A second line of defence *inside* the runner container, so that one
+    pathological program cannot exhaust the memory the container as a whole is
+    allowed. The container's own cgroup limits remain the primary control.
+
+    Two decisions here, both of which cost a production bug before they were
+    made.
+
+    **`RLIMIT_DATA`, not `RLIMIT_AS`.** `RLIMIT_AS` bounds the whole virtual
+    address space, including file-backed mappings of shared libraries, and
+    importing PyTorch maps an enormous amount of address space without using
+    anywhere near that much memory — measured here, `import pasp` with the
+    CUDA build of torch peaks at 3.2 GB of address space while holding
+    788 MB of data mappings. Under `RLIMIT_AS` the loader's `mmap` fails and
+    the import dies with
+
+        libtorch_python.so: failed to map segment from shared object
+
+    `RLIMIT_DATA` exempts file-backed mappings, so libraries load while a
+    runaway allocation still fails cleanly as a `MemoryError`.
+
+    **Applied after the imports, and relative to what they cost.** The limit
+    is for the user's program; our own runtime has to load whatever it loads.
+    Setting it first made the loader itself the thing that hit the ceiling:
+    on x86_64, `pip install torch` installs the CUDA build (there is no GPU in
+    this container — `torch.cuda.is_available()` is False — but the libraries
+    load anyway), and importing it takes ~790 MB of the old 1024 MB budget.
+    That left ~230 MB for the actual program, and on a machine where the
+    import needed a little more it crossed the line during loading:
+
+        libc10_cuda.so: failed to map segment from shared object
+
+    at a small overshoot, and a **segfault inside the dynamic loader** at a
+    larger one (measured: 256 MB gives the message, 512 MB the segfault).
+    On arm64 the same image gets a CPU-only torch with no CUDA libraries at
+    all, which is why this failed on x86_64 hosts while working on Apple
+    Silicon.
+
+    So the budget is added to what is already in use: `mem_limit_mb` is how
+    much the program may allocate, not how much the process may total.
+    """
+    if not mem_limit_mb or mem_limit_mb <= 0:
+        return
+    ceiling = data_vm_bytes() + mem_limit_mb * 1024 * 1024
+    try:
+        resource.setrlimit(resource.RLIMIT_DATA, (ceiling, ceiling))
     except (ValueError, OSError):
         pass
 
@@ -131,7 +178,7 @@ def main() -> int:
     cwd = request.get("cwd")
     mem_limit_mb = int(request.get("mem_limit_mb") or DEFAULT_MEM_LIMIT_MB)
 
-    apply_limits(mem_limit_mb)
+    apply_process_limits()
 
     # Uploaded data files live in the blob folder; run there so that a program
     # can refer to `data.csv` by its bare name.
@@ -147,6 +194,11 @@ def main() -> int:
         result["error"] = error_payload("internal", exc)
         write_result(result_path, result, started)
         return 1
+
+    # Only now: everything above is our own runtime loading itself, and
+    # bounding that is how `libc10_cuda.so: failed to map segment from shared
+    # object` happened. See `apply_memory_limit`.
+    apply_memory_limit(mem_limit_mb)
 
     # Importing dPASP prints its own notices (for example a warning when
     # PyTorch is absent). Those belong to the runner, not to the user's

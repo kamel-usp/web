@@ -82,7 +82,29 @@ RUN CLINGO_DIR="$(python3 -c 'import clingo, os; print(os.path.dirname(clingo.__
 
 # Needed for neural rules and for learning. Kept as its own layer because it
 # is by far the largest download in this image.
-RUN python3 -m pip install --no-cache-dir torch
+#
+# CPU-only, deliberately. On x86_64 the default PyPI wheel is the CUDA build:
+# it carries libtorch_cuda.so (~500 MB) and libc10_cuda.so, and pulls several
+# GB of nvidia-* wheels besides. None of it can be used here — runner
+# containers are created without `--gpus`, so `torch.cuda.is_available()` is
+# False whatever is installed. Measured: 5.3 GB installed with CUDA.
+#
+# It was not only waste. Importing the CUDA build holds ~790 MB of data
+# mappings, which collided with the runner's heap rlimit and failed while
+# loading, with
+#
+#     libc10_cuda.so: failed to map segment from shared object
+#
+# The arm64 wheel has no CUDA libraries at all, which is why that was only
+# ever seen on x86_64 hosts. (`runner_worker.apply_memory_limit` now applies
+# the rlimit after the imports, so the collision cannot recur either way.)
+#
+# If this index has no wheel for the build platform, fall back to PyPI, which
+# is what was installed before; the runner works with either.
+ARG TORCH_INDEX=https://download.pytorch.org/whl/cpu
+RUN python3 -m pip install --no-cache-dir --index-url "$TORCH_INDEX" torch \
+ || { echo "No torch at $TORCH_INDEX for this platform; falling back to PyPI." >&2; \
+      python3 -m pip install --no-cache-dir torch; }
 
 # The runpath is the clingo package directory. Linking against the symlink
 # makes the linker record the wheel's real shared-object name as the
@@ -96,7 +118,12 @@ RUN CLINGO_DIR="$(cat /opt/clingo/dir)" && \
 # Fail the build here, loudly, rather than at a user's first query: check that
 # the compiled extension loads, that it can reach clingo through the runpath,
 # and that inference returns the right answer.
-RUN python3 -c "import pasp; P = pasp.parse('0.5::a. #query(a)', from_str=True); P.directives['psemantics'] = {'psemantics': 'maxent'}; r = P(quiet=True, status=False); assert abs(r[0][0] - 0.5) < 1e-9, r; print('dPASP self-check passed:', r.tolist())"
+#
+# It also reports which torch build landed and what importing dPASP costs in
+# data mappings — the figure the runner's heap budget is added to. A `cuda
+# build: 13.0` line here means the fallback above was taken.
+RUN python3 -c "import pasp; P = pasp.parse('0.5::a. #query(a)', from_str=True); P.directives['psemantics'] = {'psemantics': 'maxent'}; r = P(quiet=True, status=False); assert abs(r[0][0] - 0.5) < 1e-9, r; print('dPASP self-check passed:', r.tolist())" && \
+    python3 -c "import pasp, torch; print('torch', torch.__version__, '| cuda build:', torch.version.cuda); print([l.strip() for l in open('/proc/self/status') if l.startswith('VmData')])"
 
 COPY requirements.txt ./
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
