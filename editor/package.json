@@ -2,17 +2,23 @@
   "name": "my-app",
   "version": "0.0.1",
   "private": true,
+  "//": [
+    "Every script that reads tsconfig.json runs `svelte-kit sync` first: it",
+    "generates .svelte-kit/tsconfig.json, which tsconfig.json extends and",
+    "which is not in git. See 'Cannot find base config file' in ../README.md."
+  ],
   "scripts": {
-    "dev": "vite dev --port 80 --host",
-    "build": "vite build",
+    "prepare": "svelte-kit sync",
+    "dev": "svelte-kit sync && vite dev --port 80 --host",
+    "build": "svelte-kit sync && vite build",
     "preview": "vite preview --port 80 --host",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --output human",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --output human --watch",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "svelte-kit sync && vitest run",
+    "test:watch": "svelte-kit sync && vitest"
   },
   "devDependencies": {
-    "@sveltejs/adapter-auto": "^2.0.0",
+    "@sveltejs/adapter-node": "^1.3.1",
     "@sveltejs/kit": "^1.20.4",
     "autoprefixer": "^10.4.15",
     "flowbite-svelte": "^0.44.15",

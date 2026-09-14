@@ -123,6 +123,62 @@ If it comes back, the question is what is bounding a mapping: check that
 nothing sets `RLIMIT_AS`, and that the heap budget is still applied after the
 imports rather than before.
 
+#### `Blocked request. This host ("…") is not allowed.`
+
+Vite's development server answers only to hostnames it recognises —
+`localhost`, `*.localhost` and bare IP addresses by default. Reach it by any
+other name and it returns 403 with that message.
+
+It is a defence against DNS rebinding: without it, a page on an attacker's
+domain whose name resolves to 127.0.0.1 could read from a dev server running
+on the visitor's machine. So the fix is to name the hosts the deployment
+answers to, not to switch the check off:
+
+```
+# .env, next to compose.yaml
+DPASP_ALLOWED_HOSTS=kamel.ime.usp.br
+```
+
+A leading dot covers a domain and every subdomain — `.ime.usp.br` allows
+`kamel.ime.usp.br`. Several names are comma-separated. The literal `true`
+disables the check, which is worth using only when something in front of the
+app already controls which hosts reach it.
+
+Measured behaviour, so the shape of the thing is clear: with the variable
+unset, `Host: kamel.ime.usp.br` gets 403 and `localhost` gets 200; set to
+`kamel.ime.usp.br` or `.ime.usp.br`, that host gets 200 while
+`Host: evil.example.com` still gets 403; set to `true`, everything gets 200.
+
+The better answer for a machine on a network is not to run the dev server at
+all — see **On a server** above. The built target has no host check because
+it does not need one.
+
+#### `Cannot find base config file "./.svelte-kit/tsconfig.json"`
+
+Printed by esbuild, from `editor/tsconfig.json`, whose first line is
+`"extends": "./.svelte-kit/tsconfig.json"`. That parent config is **generated**
+by `svelte-kit sync` and is not in git, so on a fresh checkout it does not
+exist yet and esbuild reads the file before SvelteKit's Vite plugin has run
+sync. The build then succeeds anyway, using esbuild's defaults for that first
+pass instead of the project's compiler options.
+
+This is why it showed up on a new computer and nowhere else: on a machine
+where the editor has ever been built, `editor/.svelte-kit/` is already there,
+and the dev container mounts `./editor` from the host, so it inherits whatever
+the host has.
+
+Fixed by running sync explicitly rather than hoping something else has:
+`dev`, `build`, `check` and `test` in `editor/package.json` all begin with
+`svelte-kit sync`, and a `prepare` script runs it on `npm ci`/`npm install`
+for editors and type-checkers that look at the project before any script runs.
+`editor/Dockerfile` copies `svelte.config.js` into the install layer so that
+`prepare` has what it needs there too — sync reads the config but not `src/`,
+and without the config it prints `Missing /app/svelte.config.js — skipping`
+into every image build.
+
+If you see it again, run `npm run check` (or any of the others) once in
+`web/editor`, or `npx svelte-kit sync`.
+
 #### The editor says it cannot obtain a runner, or the log shows `ECONNREFUSED`
 
 On a cold start this is expected for a few minutes, and the first build is the
@@ -219,6 +275,69 @@ DPASP_RUNNER_URL=http://127.0.0.1:8100 npm run dev -- --port 5173
 `DPASP_RUNNER_URL` bypasses the container manager and sends every request to
 one runner. It exists for local development only — set in a deployment, all
 users would share a single workspace.
+
+### On a server
+
+The `dpasp` profile runs **Vite's development server**, which is not
+something to leave facing a network: it serves the source tree, watches the
+filesystem, and has to be told which hostnames it may answer to. Use the
+`dpasp-prod` profile instead. It builds the app with `@sveltejs/adapter-node`
+and serves it with `node build` — no Vite at run time.
+
+```bash
+cd web
+cp .env.example .env         # then edit; see below
+docker compose --profile dpasp-prod up -d --build
+```
+
+The minimum for a host called `kamel.ime.usp.br`, answering on port 8000 over
+plain HTTP:
+
+```
+DPASP_ORIGIN=http://kamel.ime.usp.br:8000
+DPASP_RESTART=unless-stopped
+```
+
+`DPASP_ORIGIN` is the URL users type. Without it the server assumes `https://`
+and takes the host from the request header, which makes generated links and
+OAuth callbacks point somewhere that does not exist. `DPASP_RESTART` brings
+the stack back after a reboot. `.env.example` documents the rest: the port,
+the upload size limit, the runner's time and memory limits, and the OAuth
+credentials that turn on sign-in.
+
+Behind a reverse proxy that terminates TLS, leave `DPASP_ORIGIN` empty and
+let the app read the forwarded headers instead:
+
+```
+DPASP_PROTOCOL_HEADER=x-forwarded-proto
+DPASP_HOST_HEADER=x-forwarded-host
+```
+
+Two things to know about this target:
+
+- **Uploads are capped at 32 MB** (`DPASP_BODY_SIZE_LIMIT`, in bytes). The
+  editor posts a file as one JSON body, and adapter-node's own default would
+  be 512 kB — with that, any upload much over half a megabyte comes back as
+  `413 Invalid request body`. The limit is raised in `compose.yaml`; raise it
+  further for larger data files.
+- **The runner containers still have no resource limits** (see *Known gaps*).
+  On a shared machine that matters more than it does on a laptop: a runner
+  can use as much CPU and memory as the host will give it for up to
+  `DPASP_RUN_TIMEOUT` seconds, and it can reach the network.
+
+Development is unchanged — `docker compose --profile dpasp up --build` still
+runs the dev server with hot reload. The one difference is that the frontend
+now belongs to the `dpasp` and `mock` profiles rather than starting for every
+command, so a bare `docker compose up` with no profile no longer starts it.
+
+If you do want the dev server reachable by name — for a quick demo on a
+trusted network, say — name the host rather than disabling the check:
+
+```
+DPASP_ALLOWED_HOSTS=kamel.ime.usp.br
+```
+
+See the troubleshooting entry below for what that check is for.
 
 ## The runner's result format
 
@@ -469,6 +588,8 @@ What it was, and what was done:
 | pip's root-user warning and version check | normal in a container, not actionable from inside the image | `PIP_ROOT_USER_ACTION` / `PIP_DISABLE_PIP_VERSION_CHECK` |
 | `FromAsCasing` and `LegacyKeyValueFormat` from BuildKit | `FROM ... as` and `ENV key value` in `editor/Dockerfile` | `AS` and `ENV key=value`; the unused `cm_host` variable was dropped |
 | A theme object printed to the server log on every render | a leftover `console.log` in `svelte-themes`, whose `<SvelteTheme />` did nothing — `app.html` hardcodes `class="dark"` and there is no theme toggle | dependency and component removed |
+| "Could not detect a supported production environment", on every build | `@sveltejs/adapter-auto` recognises a handful of hosting platforms and none of them is a university server | `@sveltejs/adapter-node` (pinned to 1.x, the SvelteKit 1 line), which also produces something runnable: `build/`, started with `node build` |
+| `Cannot find base config file "./.svelte-kit/tsconfig.json"`, on a fresh checkout only | `tsconfig.json` extends a file that `svelte-kit sync` generates, and nothing ran sync first | every script that reads `tsconfig.json` now begins with `svelte-kit sync`, plus a `prepare` script — see the troubleshooting entry |
 | `inflight@1.0.6` "leaks memory", plus `rimraf@2` and `glob@7` | one chain under `svelte-check` 3: `svelte-check → svelte-preprocess → sorcery → sander → rimraf@2 → glob@7 → inflight` | `svelte-check` upgraded to 4.x, which dropped `svelte-preprocess` from its dependencies and takes the whole chain with it (24 packages) |
 
 `npm install` is now warning-free from a clean cache — no deprecation notices

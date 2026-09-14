@@ -1,4 +1,4 @@
-import adapter from "@sveltejs/adapter-auto";
+import adapter from "@sveltejs/adapter-node";
 import { vitePreprocess } from "@sveltejs/kit/vite";
 
 /** @type {import('@sveltejs/kit').Config} */
@@ -8,9 +8,14 @@ const config = {
   preprocess: [vitePreprocess({})],
 
   kit: {
-    // adapter-auto only supports some environments, see https://kit.svelte.dev/docs/adapter-auto for a list.
-    // If your environment is not supported or you settled on a specific environment, switch out the adapter.
-    // See https://kit.svelte.dev/docs/adapters for more information about adapters.
+    // adapter-node, not adapter-auto: this is deployed to a plain server
+    // (see "Running it on a server" in ../README.md), which adapter-auto does
+    // not recognise — it printed "Could not detect a supported production
+    // environment" on every build and produced nothing runnable. The output
+    // is `build/`, started with `node build`.
+    //
+    // Pinned to 1.x: adapter-node 2+ requires SvelteKit 2, and this project
+    // is on SvelteKit 1.30.4.
     adapter: adapter(),
     alias: {
       $lib: "src/lib",

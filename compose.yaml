@@ -12,8 +12,14 @@ services:
     build:
       context: backend
       dockerfile: Dockerfile
+    # `dpasp-prod` is the same manager with the built frontend in front of it
+    # — see the `frontend-prod` service.
     profiles:
       - dpasp
+      - dpasp-prod
+    # `no` in development; put DPASP_RESTART=unless-stopped in the `.env` on a
+    # server so the stack comes back after a reboot.
+    restart: ${DPASP_RESTART:-no}
     networks:
       - cm
     ports:
@@ -45,11 +51,17 @@ services:
         aliases:
           - container-manager
 
+  # Development frontend: Vite's dev server, with the source bind-mounted for
+  # hot reload. Not something to expose to a network — it serves the source
+  # tree and watches the filesystem. Use `frontend-prod` for that.
   frontend:
     build:
       context: ./editor
       dockerfile: Dockerfile
       target: dev
+    profiles:
+      - dpasp
+      - mock
     networks:
       - cm
       - dpasp-instances
@@ -76,6 +88,60 @@ services:
       GITHUB_SECRET: ${GITHUB_SECRET:-}
       GOOGLE_ID: ${GOOGLE_ID:-}
       GOOGLE_SECRET: ${GOOGLE_SECRET:-}
+      # Hostnames Vite's dev server will answer to, comma-separated. Without
+      # the machine's own name here it refuses the request with
+      # "Blocked request. This host (...) is not allowed." — a DNS-rebinding
+      # guard, which is one more reason the dev server does not belong on a
+      # network. See allowedHosts() in editor/vite.config.ts.
+      DPASP_ALLOWED_HOSTS: ${DPASP_ALLOWED_HOSTS:-}
+
+  # Production frontend: the app built by adapter-node and served by `node
+  # build`. No Vite at run time, no source in the image beyond what the build
+  # needed, no host check to configure.
+  #
+  #   docker compose --profile dpasp-prod up -d --build
+  #
+  # Set DPASP_ORIGIN in the `.env` next to this file to the URL users type —
+  # without it the handler assumes https:// and derives the host from the
+  # request, which breaks links and OAuth callbacks on a plain-HTTP
+  # deployment:
+  #
+  #   DPASP_ORIGIN=http://kamel.ime.usp.br:8000
+  #
+  # Behind a reverse proxy that terminates TLS, leave DPASP_ORIGIN empty and
+  # set the two header variables instead:
+  #
+  #   DPASP_PROTOCOL_HEADER=x-forwarded-proto
+  #   DPASP_HOST_HEADER=x-forwarded-host
+  frontend-prod:
+    build:
+      context: ./editor
+      dockerfile: Dockerfile
+      target: production
+    profiles:
+      - dpasp-prod
+    restart: ${DPASP_RESTART:-no}
+    networks:
+      - cm
+      - dpasp-instances
+    ports:
+      - ${DPASP_PORT:-8000}:3000
+    environment:
+      AUTH_SECRET: ${AUTH_SECRET:-}
+      GITHUB_ID: ${GITHUB_ID:-}
+      GITHUB_SECRET: ${GITHUB_SECRET:-}
+      GOOGLE_ID: ${GOOGLE_ID:-}
+      GOOGLE_SECRET: ${GOOGLE_SECRET:-}
+      ORIGIN: ${DPASP_ORIGIN:-}
+      PROTOCOL_HEADER: ${DPASP_PROTOCOL_HEADER:-}
+      HOST_HEADER: ${DPASP_HOST_HEADER:-host}
+      # Bytes. adapter-node's own default is 512 kB, and an upload is one
+      # JSON body, so anything larger would come back as
+      # "413 Invalid request body". Raise it further for larger data files.
+      BODY_SIZE_LIMIT: ${DPASP_BODY_SIZE_LIMIT:-33554432}
+      # Matches the editor's own proxy timeout; a run may hold the connection
+      # open for the whole DPASP_RUN_TIMEOUT.
+      DPASP_PROXY_TIMEOUT_MS: ${DPASP_PROXY_TIMEOUT_MS:-330000}
 
 volumes:
   # Holds the frontend's installed node_modules across restarts; see the

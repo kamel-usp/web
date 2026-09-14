@@ -1,0 +1,26 @@
+# Keep the build context to the sources.
+#
+# `node_modules` in particular must never be copied in: the production stage
+# does `COPY . .` over the installed tree, so a host `node_modules` built for
+# another platform (macOS, say) would replace the image's Linux one and break
+# esbuild during the build. It also makes the context upload take longer than
+# the build itself.
+node_modules
+
+# Build products, all regenerated inside the image. `.svelte-kit` is written
+# by `svelte-kit sync`, which every build script runs first — see the note in
+# package.json.
+.svelte-kit
+build
+package
+
+# Secrets stay on the host; the frontend reads them from the environment at
+# run time (see compose.yaml). The example file is documentation, so it may
+# come along.
+.env
+.env.*
+!.env.example
+
+.DS_Store
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
