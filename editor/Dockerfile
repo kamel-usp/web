@@ -76,10 +76,16 @@ FROM base AS dev
 
 # node_modules is baked into the image and kept out of the way of the source
 # bind mount by the `editor_node_modules` volume declared in compose.yaml.
-# The dev container therefore no longer runs `npm install` on every start,
+# The dev container therefore does not run `npm install` on every start,
 # which is what printed the deprecation and npm-version notices each time.
 #
-# After changing package.json, refresh both the image and that volume:
-#   docker compose down -v && docker compose --profile dpasp up --build
-COPY --from=installer /app/node_modules ./node_modules
-CMD ["npm", "run", "dev"]
+# The installed tree lives at /opt/node_modules rather than /app/node_modules,
+# because the volume is mounted over the latter. The entrypoint copies it into
+# the volume whenever the lockfile has moved on — see the long comment in
+# `docker-dev-entrypoint.sh` for the failure that made that necessary. It
+# means `docker compose up --build` is enough after changing package.json;
+# `down -v` is no longer part of the ritual.
+COPY --from=installer /app/node_modules /opt/node_modules
+COPY docker-dev-entrypoint.sh /usr/local/bin/dev-entrypoint
+RUN chmod +x /usr/local/bin/dev-entrypoint
+CMD ["dev-entrypoint"]

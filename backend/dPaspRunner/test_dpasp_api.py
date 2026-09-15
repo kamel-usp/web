@@ -81,7 +81,7 @@ def test_clean_output_truncates(monkeypatch):
 
 def test_mock_result_has_one_entry_per_query(monkeypatch):
     monkeypatch.setattr(dpasp_api, "IS_MOCK", True)
-    result = dpasp_api.run_program("stable", "credal", EARTHQUAKE)
+    result = dpasp_api.run_program(EARTHQUAKE)
     assert result["ok"]
     assert len(result["queries"]) == 2
     assert result["interval"] is True
@@ -90,8 +90,10 @@ def test_mock_result_has_one_entry_per_query(monkeypatch):
 
 
 def test_mock_maxent_is_a_point_value(monkeypatch):
+    # The mock reads the directive textually, since there is no parser here.
     monkeypatch.setattr(dpasp_api, "IS_MOCK", True)
-    result = dpasp_api.run_program("stable", "maxent", EARTHQUAKE)
+    result = dpasp_api.run_program("#semantics maxent.\n" + EARTHQUAKE)
+    assert result["psem"] == "maxent"
     assert result["interval"] is False
     assert all(len(e["values"]) == 1 for e in result["queries"])
 
@@ -102,7 +104,7 @@ def test_mock_maxent_is_a_point_value(monkeypatch):
 
 @needs_pasp
 def test_credal_bounds_match_the_published_values():
-    result = dpasp_api.run_program("stable", "credal", EARTHQUAKE)
+    result = dpasp_api.run_program(EARTHQUAKE)
     assert result["ok"], result["error"]
     assert result["interval"] is True
 
@@ -115,7 +117,7 @@ def test_credal_bounds_match_the_published_values():
 
 @needs_pasp
 def test_maxent_returns_a_single_value_per_query():
-    result = dpasp_api.run_program("stable", "maxent", EARTHQUAKE)
+    result = dpasp_api.run_program("#semantics maxent.\n" + EARTHQUAKE)
     assert result["ok"], result["error"]
     assert result["interval"] is False
     assert [len(e["values"]) for e in result["queries"]] == [1, 1]
@@ -124,26 +126,44 @@ def test_maxent_returns_a_single_value_per_query():
 @needs_pasp
 def test_credal_bounds_can_differ():
     # Two stable models for the disjunction, so P(b) is only bounded.
-    result = dpasp_api.run_program("stable", "credal", "0.5::a.\nb;c :- a.\n#query(b)\n")
+    result = dpasp_api.run_program("0.5::a.\nb;c :- a.\n#query(b)\n")
     entry = result["queries"][0]
     assert entry["lower"] == pytest.approx(0.0)
     assert entry["upper"] == pytest.approx(0.5)
 
 
 @needs_pasp
-def test_a_semantics_directive_overrides_the_request():
-    # The `pasp` CLI lets the program's own directive win; so do we.
-    result = dpasp_api.run_program(
-        "stable", "credal", "#semantics maxent.\n0.5::a.\nb;c :- a.\n#query(b)\n"
-    )
+def test_the_semantics_directive_decides():
+    # The only way to ask for max-entropy: there is no longer a request field
+    # for it, because dPASP reads the program's directive regardless.
+    result = dpasp_api.run_program("#semantics maxent.\n0.5::a.\nb;c :- a.\n#query(b)\n")
     assert result["psem"] == "maxent"
     assert result["interval"] is False
 
 
 @needs_pasp
+def test_the_logic_semantics_is_reported_from_the_program():
+    # Reported, not echoed: `program.semantics` after parsing, so it reflects
+    # the directive rather than anything the caller asked for.
+    plain = dpasp_api.run_program("0.5::a.\n#query(a)\n")
+    assert plain["sem"] == "stable"
+
+    lstable = dpasp_api.run_program("#semantics lstable.\n0.5::a.\n#query(a)\n")
+    assert lstable["sem"] == "lstable", lstable["error"]
+
+
+@needs_pasp
+def test_both_halves_of_the_directive_are_reported():
+    result = dpasp_api.run_program(
+        "#semantics lstable, maxent.\n0.5::a.\n#query(a)\n"
+    )
+    assert (result["sem"], result["psem"]) == ("lstable", "maxent"), result["error"]
+
+
+@needs_pasp
 def test_variable_queries_are_grounded_and_named():
     result = dpasp_api.run_program(
-        "stable", "maxent", "0.5::e(1). 0.5::e(2).\nf(X) :- e(X).\n#query(f(X))\n"
+        "#semantics maxent.\n0.5::e(1). 0.5::e(2).\nf(X) :- e(X).\n#query(f(X))\n"
     )
     assert result["ok"], result["error"]
     names = [e["query"] for e in result["queries"]]
@@ -153,7 +173,7 @@ def test_variable_queries_are_grounded_and_named():
 
 @needs_pasp
 def test_a_syntax_error_reports_a_position():
-    result = dpasp_api.run_program("stable", "credal", "0.7::burglary\n#query(burglary)\n")
+    result = dpasp_api.run_program("0.7::burglary\n#query(burglary)\n")
     assert result["ok"] is False
     assert result["error"]["kind"] == "parse"
     assert result["error"]["line"] == 2
@@ -162,7 +182,7 @@ def test_a_syntax_error_reports_a_position():
 
 @needs_pasp
 def test_a_program_without_queries_still_succeeds():
-    result = dpasp_api.run_program("stable", "credal", "0.5::a.\n")
+    result = dpasp_api.run_program("0.5::a.\n")
     assert result["ok"] is True
     assert result["queries"] == []
 
@@ -174,7 +194,7 @@ def test_a_runaway_program_is_stopped(monkeypatch):
     monkeypatch.setattr(dpasp_api, "RUN_TIMEOUT_S", 3.0)
     facts = "\n".join(f"0.5::p{i}." for i in range(30))
     body = ", ".join(f"p{i}" for i in range(30))
-    result = dpasp_api.run_program("stable", "credal", f"{facts}\nq :- {body}.\n#query(q)\n")
+    result = dpasp_api.run_program(f"{facts}\nq :- {body}.\n#query(q)\n")
     assert result["ok"] is False
     assert result["error"]["kind"] == "timeout"
 
@@ -185,7 +205,7 @@ def test_the_worker_is_a_separate_process():
     # C-level stdout must not be the web server's.
     probe = (
         "import sys, dpasp_api; "
-        "dpasp_api.run_program('stable','credal','0.5::a.\\n#query(a)\\n'); "
+        "dpasp_api.run_program('0.5::a.\\n#query(a)\\n'); "
         "print('pasp' in sys.modules)"
     )
     out = subprocess.run(
@@ -362,7 +382,7 @@ def test_dpasp_imports_under_the_cap():
 @needs_pasp
 def test_a_real_run_succeeds_under_the_default_cap():
     """End to end at the shipped default, the configuration users actually get."""
-    result = dpasp_api.run_program("stable", "credal", EARTHQUAKE)
+    result = dpasp_api.run_program(EARTHQUAKE)
     assert result["ok"] is True, result["error"]
     assert result["queries"][1]["lower"] == pytest.approx(0.58, abs=1e-9)
 
@@ -393,7 +413,7 @@ def test_the_timeout_message_quotes_the_configured_deadline(monkeypatch):
     monkeypatch.setattr(dpasp_api, "RUN_TIMEOUT_S", 2.0)
     facts = "\n".join(f"0.5::p{i}." for i in range(30))
     body = ", ".join(f"p{i}" for i in range(30))
-    result = dpasp_api.run_program("stable", "credal", f"{facts}\nq :- {body}.\n#query(q)\n")
+    result = dpasp_api.run_program(f"{facts}\nq :- {body}.\n#query(q)\n")
 
     assert result["error"]["kind"] == "timeout"
     assert "2 seconds" in result["error"]["message"]

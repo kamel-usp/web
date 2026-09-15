@@ -75,6 +75,24 @@ export async function POST({ params, request, locals }) {
 			);
 		}
 
+		// `ENOTFOUND` on a `dpasp-instance-*` name means Docker's embedded DNS
+		// has no record of that container — which happens when it is not
+		// running. A stopped container is dropped from DNS, so the failure
+		// surfaces here, at the far end, as a name that does not exist.
+		if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
+			const host = /** @type {{cause?: {hostname?: string}}} */ (e)?.cause?.hostname ?? '';
+			return runnerError(
+				`The runner container for this session (${host}) could not be found by name. ` +
+					'Docker only resolves containers that are running, so it has most likely ' +
+					'exited. The container manager checks for this when it hands one out, so ' +
+					'this one died afterwards — its own log says why:\n\n' +
+					`    docker logs ${host}\n` +
+					'    docker ps -a --filter label=dpasp.role=runner\n\n' +
+					'Reloading the page asks the manager for a fresh container.',
+				502
+			);
+		}
+
 		return runnerError('The dPASP runner could not be reached.', 502);
 	}
 }

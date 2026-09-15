@@ -20,6 +20,9 @@ class MockDocker:
         self.deleted = []
         self.builds = 0
         self.sweeps = 0
+        #: Containers this fake considers dead, by id.
+        self.dead = set()
+        self.liveness_checks = []
 
     def build_image(self):
         self.builds += 1
@@ -33,6 +36,10 @@ class MockDocker:
 
     def deleteContainer(self, container_id):
         self.deleted.append(container_id)
+
+    def isRunning(self, container_id):
+        self.liveness_checks.append(container_id)
+        return container_id not in self.dead
 
 
 async def settle():
@@ -167,5 +174,76 @@ def test_an_empty_pool_spawns_on_demand():
 
         assert container_id is not None
         assert manager.activeContainerCount() == 1
+
+    asyncio.run(scenario())
+
+
+# --------------------------------------------------------------------------
+# Handing out only live containers
+#
+# A stopped container disappears from Docker's embedded DNS, so its id is
+# worse than useless: the frontend resolves nothing and reports
+# `getaddrinfo ENOTFOUND dpasp-instance-<id>`, which names no cause.
+# --------------------------------------------------------------------------
+
+def test_a_dead_pre_allocated_container_is_skipped():
+    async def scenario():
+        docker = MockDocker()
+        manager = containerManager(60, pre_allocate=3, docker_api=docker)
+        await manager.start()
+        await settle()
+
+        # Everything in the pool died while it waited.
+        docker.dead = set(manager.pre_allocated_containers)
+        pooled = list(manager.pre_allocated_containers)
+
+        container_id = await manager.getContainer("u")
+
+        assert container_id not in pooled
+        assert docker.liveness_checks  # it did look
+
+    asyncio.run(scenario())
+
+
+def test_a_users_container_is_replaced_when_it_dies():
+    async def scenario():
+        docker = MockDocker()
+        manager = containerManager(60, pre_allocate=4, docker_api=docker)
+        await manager.start()
+        await settle()
+
+        first = await manager.getContainer("u")
+        await settle()
+
+        # Same user, same container — while it is alive.
+        assert await manager.getContainer("u") == first
+
+        docker.dead.add(first)
+        replacement = await manager.getContainer("u")
+
+        assert replacement != first
+        assert manager.user_id_to_container_id["u"] == replacement
+
+    asyncio.run(scenario())
+
+
+def test_liveness_is_optional_for_a_docker_api_without_it():
+    # `alive` is guarded by hasattr so that older stubs — and any other
+    # implementation of this interface — keep working.
+    class Minimal(MockDocker):
+        isRunning = None
+
+        def __getattribute__(self, name):
+            if name == "isRunning":
+                raise AttributeError(name)
+            return object.__getattribute__(self, name)
+
+    async def scenario():
+        docker = Minimal()
+        manager = containerManager(60, pre_allocate=2, docker_api=docker)
+        await manager.start()
+        await settle()
+
+        assert await manager.getContainer("u") is not None
 
     asyncio.run(scenario())

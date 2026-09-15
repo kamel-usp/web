@@ -101,8 +101,35 @@ def clean_output(text: str) -> str:
     return text
 
 
-def mock_result(sem: str, psem: str, code: str) -> dict:
+#: `#semantics [logic,] probabilistic.` — the directive that decides how a
+#: program is run. Only the mock needs to read it: the real runner asks the
+#: parsed program, which is authoritative.
+_SEMANTICS_RE = re.compile(r"^[ \t]*#semantics\s+([^.]*)\.", re.MULTILINE)
+
+LOGIC_SEMANTICS = ("stable", "partial", "lstable", "smproblog")
+PROB_SEMANTICS = ("credal", "maxent")
+
+
+def declared_semantics(code: str) -> tuple:
+    """The `(logic, probabilistic)` semantics a program asks for, defaulted.
+
+    A *textual* reading, for the mock target and for error paths where the
+    program never reached the parser. dPASP itself decides this in
+    `PreparsingTransformer`, and `runner_worker` reports what it decided.
+    """
+    sem, psem = "stable", "credal"
+    for match in _SEMANTICS_RE.finditer(code):
+        for option in (o.strip().lower() for o in match.group(1).split(",")):
+            if option in LOGIC_SEMANTICS:
+                sem = option
+            elif option in PROB_SEMANTICS:
+                psem = option
+    return sem, psem
+
+
+def mock_result(code: str) -> dict:
     """Fabricate a plausible result, for running the stack without dPASP."""
+    sem, psem = declared_semantics(code)
     queries = re.findall(r"^[ \t]*#query\s*(\(.*)$", code, flags=re.MULTILINE)
     interval = psem == "credal"
     entries = []
@@ -129,15 +156,20 @@ def mock_result(sem: str, psem: str, code: str) -> dict:
     }
 
 
-def run_program(sem: str, psem: str, code: str, cwd: str = None) -> dict:
-    """Run `code` under the given semantics and return a structured result."""
+def run_program(code: str, cwd: str = None) -> dict:
+    """Run `code` and return a structured result.
+
+    The semantics are the program's own business: a `#semantics` directive
+    decides them, and the result reports what dPASP used. There used to be
+    `sem` and `psem` arguments, fed by dropdowns in the editor — two places
+    for one answer, and the program's won anyway, so the dropdowns could
+    disagree with the file on screen.
+    """
     if IS_MOCK:
-        return mock_result(sem, psem, code)
+        return mock_result(code)
 
     request = json.dumps(
         {
-            "sem": sem,
-            "psem": psem,
             "code": code,
             "cwd": cwd,
             "mem_limit_mb": RUN_MEM_LIMIT_MB,
@@ -192,6 +224,8 @@ def run_program(sem: str, psem: str, code: str, cwd: str = None) -> dict:
     if marker in (stdout or ""):
         stdout = stdout.split(marker, 1)[1]
     output = clean_output((stdout or "") + (("\n" + stderr) if stderr else ""))
+
+    sem, psem = declared_semantics(code)
 
     if timed_out:
         return {

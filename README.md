@@ -13,7 +13,8 @@ web/
 └── backend/
     ├── main.py             container manager (port 8001)
     ├── containerManager/    one runner container per user, with a reaper
-    └── dPaspRunner/        the runner image: FastAPI + dPASP (port 80)
+    └── dPaspRunner/        the runner image: FastAPI + dPASP (port 8000,
+                            as a non-root user)
 ```
 
 Request path for a run:
@@ -123,6 +124,35 @@ If it comes back, the question is what is bounding a mapping: check that
 nothing sets `RLIMIT_AS`, and that the heap budget is still applied after the
 imports rather than before.
 
+#### Nothing answers on <http://localhost:8000>
+
+The dev frontend exited instead of serving. `docker compose --profile dpasp
+logs frontend` says which of these it was; the first is by far the most
+likely.
+
+**`Cannot find package '@sveltejs/adapter-node' imported from
+/app/svelte.config.js`** — the `editor_node_modules` volume is older than
+`package.json`. Docker fills a *named* volume from the image only when the
+volume is empty, and `up --build` rebuilds images without touching volumes,
+so a dependency added since the volume was created is simply not there.
+`npm run dev` starts with `svelte-kit sync`, which loads `svelte.config.js`,
+which imports the adapter — so the script dies before `vite dev` runs, and
+nothing listens at all.
+
+The dev image now repairs this itself: it keeps its installed tree at
+`/opt/node_modules` and its entrypoint copies that into the volume whenever
+the volume's stamped lockfile hash differs from the current one. If you are
+on an image built before that, clear the volume once:
+
+```bash
+docker compose --profile dpasp down -v
+docker compose --profile dpasp up --build
+```
+
+**Nothing at all in the log, and `docker compose ps` shows no frontend** —
+check the profile. Every service in this file belongs to one, so a bare
+`docker compose up` starts nothing; the frontend is in `dpasp` and `mock`.
+
 #### `Blocked request. This host ("…") is not allowed.`
 
 Vite's development server answers only to hostnames it recognises —
@@ -205,6 +235,101 @@ explanation while it warms up, and the editor displays that explanation.
 
 If `/health` reports `"status": "error"`, the build itself failed and `detail`
 carries the reason.
+
+#### `getaddrinfo ENOTFOUND dpasp-instance-<id>`
+
+The frontend logs this when it proxies a request to a runner:
+
+```
+frontend-1 | proxying blob/list failed: TypeError: fetch failed
+  [cause]: Error: getaddrinfo ENOTFOUND dpasp-instance-92c0fb801811
+```
+
+Docker's embedded DNS only answers for containers that are *running*, so the
+name disappearing means the container is gone or stopped — not that the
+network is misconfigured. Two things produce it.
+
+**The runner died.** Ask its own log why, and check whether it is still
+listed:
+
+```bash
+docker ps -a --filter label=dpasp.role=runner
+docker logs dpasp-instance-<id>
+```
+
+A runner that fails to start is now refused at creation rather than handed
+out: `createContainer` waits for `running`, waits `DPASP_RUNNER_START_GRACE`
+(0.75 s by default) for a container that exits immediately after starting,
+re-checks, and on failure raises with the container's last 20 lines of output
+before removing it. `getContainer` re-checks liveness before handing out a
+pooled or previously assigned container, so a runner that died while idle is
+replaced instead of returned. What remains is a runner that dies *after* it
+was handed out — that is what the message above now says, with the two
+commands to run.
+
+**Two networks match the name.** `docker.networks.list(names=…)` matches on a
+substring, so a second network whose name merely *contains* `dpasp-instances`
+(one created by hand, or a second Compose project) makes the choice ambiguous:
+the runner can land on a network the container manager is not attached to, and
+the name then never resolves. Check with
+
+```bash
+docker network ls | grep dpasp-instances
+```
+
+The manager now disambiguates by reading its own Compose labels
+(`com.docker.compose.project` / `.network`, via its container's hostname), and
+raises with the list of candidates if it still cannot decide. To settle it
+explicitly, name the network:
+
+```bash
+# .env, next to compose.yaml
+DPASP_RUNNER_NETWORK=web_dpasp-instances
+```
+
+Reloading the page asks the manager for a fresh container either way.
+
+#### `PermissionError: [Errno 13] Permission denied: '/app/main.py'`
+
+Reported through `/health` as the runner exiting on startup:
+
+```json
+{"status":"error","detail":"RuntimeError: The runner container … is exited
+ (exit code 1) … PermissionError: [Errno 13] Permission denied: '/app/main.py'"}
+```
+
+uvicorn raises it while importing `main:app`, so the container dies at once.
+The cause is not in the runner code: **`COPY` preserves the mode bits of the
+files in the build context**, and those come from the umask your checkout was
+made with. Under the usual 022 they are 0644 and all is well; under 077 they
+land in the image as 0600 owned by root. That was invisible while the server
+ran as root — root ignores permission bits — and became fatal the moment it
+stopped.
+
+```bash
+ls -l backend/dPaspRunner/main.py      # 0600 on the build host?
+```
+
+The image no longer depends on the answer: both stages run
+`chmod -R a+rX /app` after their last `COPY`, and the dpasp stage then reads
+`/app/main.py` as `runner` so a broken build fails at `docker build` rather
+than at a visitor's first query. `backend/dPaspRunner/test_dockerfile.py`
+keeps both in place without needing a daemon.
+
+The runner image is **not** a Compose service — the container manager builds
+it through the Docker API at its own startup, from the copy of
+`backend/dPaspRunner` inside the manager image. So the fix travels host →
+manager image → runner image, and picking it up means rebuilding both, which
+is what `up --build` does:
+
+```bash
+docker compose --profile dpasp down
+docker ps -aq --filter label=dpasp.role=runner | xargs -r docker rm -f
+docker compose --profile dpasp up --build
+```
+
+`down` first because the manager caches its `/health` error for the life of
+the process: rebuilding the image under a running manager changes nothing.
 
 #### `failed to set up container networking: network <id> not found`
 
@@ -325,6 +450,52 @@ Two things to know about this target:
   can use as much CPU and memory as the host will give it for up to
   `DPASP_RUN_TIMEOUT` seconds, and it can reach the network.
 
+#### Stopping it
+
+```bash
+cd web
+docker compose --profile dpasp-prod down                          # 1
+docker rm -f $(docker ps -aq --filter label=dpasp.role=runner)    # 2
+```
+
+Both lines are needed, for different reasons.
+
+**1. The profile has to be repeated.** Compose only acts on services whose
+profiles are active, so a bare `docker compose down` stops *nothing* here —
+every service in this file belongs to a profile. The same goes for `ps`,
+`logs` and `stop`. `COMPOSE_PROFILES=dpasp-prod` in the `.env` is the
+alternative, and then the flag can be left off every command.
+
+**2. The runner containers are not Compose's.** The container manager creates
+them through the Docker API, so `down` leaves them running; they are labelled
+`dpasp.role=runner`, which is what the filter above matches. The manager
+sweeps leftovers when it next starts, so they are not permanent — but between
+a `down` and the next `up` they keep running, holding memory and a network
+endpoint.
+
+That endpoint is why the order matters. `down` tries to remove the
+`dpasp-instances` network, and a network with containers still attached
+cannot be removed; if `down` reports that, run it once more after line 2 to
+clear the network. Leaving a removed network referenced by live containers is
+what produced `failed to set up container networking: network <id> not found`
+on the next start.
+
+To check that nothing is left:
+
+```bash
+docker compose --profile dpasp-prod ps
+docker ps --filter label=dpasp.role=runner
+```
+
+Other useful forms:
+
+| | |
+| --- | --- |
+| `docker compose --profile dpasp-prod stop` | stop without removing; `start` resumes. Survives a reboot as stopped, since `restart: unless-stopped` does not restart what a person stopped |
+| `docker compose --profile dpasp-prod restart frontend-prod` | bounce one service |
+| `docker compose --profile dpasp-prod logs -f frontend-prod` | follow its log |
+| `docker compose --profile dpasp-prod down -v` | also drop the named volume, which only the dev profile uses |
+
 Development is unchanged — `docker compose --profile dpasp up --build` still
 runs the dev server with hot reload. The one difference is that the frontend
 now belongs to the `dpasp` and `mock` profiles rather than starting for every
@@ -341,8 +512,8 @@ See the troubleshooting entry below for what that check is for.
 
 ## The runner's result format
 
-`POST /run` takes `{sem, psem, code}` and always answers `200` with a body of
-this shape. A faulty program is not an HTTP error: it comes back with
+`POST /run` takes `{code}` and always answers `200` with a body of this
+shape. A faulty program is not an HTTP error: it comes back with
 `ok: false` and a structured `error`, so the editor renders it in the output
 panel like any other outcome.
 
@@ -365,8 +536,11 @@ panel like any other outcome.
 
 - `interval` is true under the credal semantics, where each query yields
   `[lower, upper]`, and false under max-entropy, where it yields one value.
-- A `#semantics` directive inside the program wins over the UI selection, as
-  it does in the `pasp` CLI; `psem` reports what was actually used.
+- `sem` and `psem` are **reported, not requested**. The request body is just
+  `{code}`: dPASP decides the semantics from the program's own `#semantics`
+  directive, and the runner reads both halves back off the parsed program —
+  `program.semantics` for the logic one, `directives["psemantics"]` for the
+  probabilistic one, which is credal when the program says nothing.
 - Non-finite bounds are sent as the strings `"inf"`, `"-inf"` and `"nan"`,
   because JSON has no literals for them and `JSON.parse` rejects the
   alternatives.
@@ -453,6 +627,189 @@ and ~700 MB of data mappings. Build with
 `--build-arg TORCH_INDEX=https://pypi.org/simple` to get the default PyPI
 wheel back; the build falls back to it automatically if the CPU index has no
 wheel for the platform, and the runner works with either.
+
+## What bounds a runner
+
+A dPASP program may contain a `#python ... #end.` block, and dPASP executes
+it. So a runner container runs arbitrary Python chosen by whoever opened the
+page: **the container is the security boundary, not the code inside it.** The
+per-run timeout and heap rlimit of the previous section bound one *program*;
+nothing there stops it from spawning processes, filling a disk or opening a
+socket.
+
+`containerManager.runnerLimits` is what bounds the container. Every value has
+an environment override — `.env.example` lists them — and the manager prints
+the effective set when it starts.
+
+| | default | why |
+| --- | --- | --- |
+| `nano_cpus` | 1.0 core (`DPASP_RUNNER_CPUS`) | a hard quota, not a share: one user's grounding cannot slow everyone else's |
+| `mem_limit`, `memswap_limit` | 3g (`DPASP_RUNNER_MEM`), equal, so no swap | must cover ~800 MB to load dPASP, `DPASP_RUN_MEM_MB` of program heap, and the tmpfs below |
+| `pids_limit` | 256 (`DPASP_RUNNER_PIDS`) | a fork bomb exhausts its own container and nothing else |
+| `user` | `10001:10001` | the image ends with `USER runner`; this is the half that survives an edit to the image, and the only part Docker compares |
+| `cap_drop` | `ALL`, nothing added back | the runner listens on **8000**, not 80, precisely so that binding it needs no `NET_BIND_SERVICE` |
+| `security_opt` | `no-new-privileges:true` | no regaining privileges through a setuid binary |
+| `read_only` | true (`DPASP_RUNNER_READONLY=0` to disable) | with tmpfs for `/tmp` (the worker's result file) and `/blobs` (uploads), both `nosuid,nodev`, and `/blobs` `noexec` |
+| `ulimits` | 1024 open files | |
+| network | the internal `dpasp-instances` only | no route off the host — see below |
+| `OMP_NUM_THREADS` etc. | the CPU quota | PyTorch and OpenMP size their pools from the *host's* CPU count, so under a 1-core quota they would start a dozen threads to contend for one core |
+
+### No route out
+
+Two things together do this, and both are needed:
+
+1. `compose.yaml` declares `dpasp-instances` as `internal: true`. Docker gives
+   an internal network no gateway, so a container attached only to it cannot
+   reach the host's network, let alone the internet.
+2. The manager passes `network=` to `containers.run`, so the container is
+   *created* on that network. This is the part that is easy to miss: a
+   container Docker attaches by default lands on the default bridge, which is
+   masqueraded. Attaching the runner network afterwards — which is what the
+   code used to do, to add an alias — leaves the default bridge in place and
+   the internet with it.
+
+Because `containers.run` takes `network=` but not `aliases=`, runners are now
+*named* `dpasp-instance-<id>` rather than given that as an alias. Docker's
+embedded DNS resolves container names on a user-defined network, so
+`http://dpasp-instance-<id>` still resolves from the frontend and nothing in
+the editor changed.
+
+The frontend is on `dpasp-instances` too, so it can reach runners, and on
+`cm` as well. A container on both keeps its default route and its published
+ports on the non-internal one, so publishing port 8000 is unaffected.
+
+To let programs reach the internet again:
+
+```
+DPASP_RUNNER_ALLOW_NETWORK=1
+```
+
+The manager then also attaches the default bridge to each runner. Two of the
+shipped examples need it: `digitsum.pasp` downloads MNIST, and
+`learning.pasp` reads its CSV from a URL. Uploading the CSV and referring to
+it by name works either way, which is why the example's comments recommend
+it.
+
+### Not root
+
+The image creates a `runner` account (uid and gid **10001**) and ends with
+`USER runner`; the manager passes `user="10001:10001"` as well, which is the
+half that survives someone editing the image and is the only part Docker
+compares. 10001 rather than 1000 because distributions hand 1000 out
+themselves — `ubuntu:jammy` leaves it free, but `ubuntu:24.04` ships a user
+holding it, so a base-image bump would fail with "UID 1000 is not unique". Everything the image needs to read is world-readable, and the two
+paths the server writes to are mounted at run time.
+
+This is why the runner listens on **8000** rather than 80: binding below 1024
+needs `CAP_NET_BIND_SERVICE`, and the point is to hold no capabilities at
+all. The port appears in `backend/dPaspRunner/Dockerfile` and in
+`editor/src/lib/runnerUrl.ts`; a test reads the Dockerfile and fails if the
+two disagree, since a mismatch would otherwise show up only once deployed, as
+every run reporting an unreachable runner.
+
+### Measured against a real daemon
+
+All of the above was checked by creating a runner with the real
+`containerManager` code against a real Docker daemon, and inspecting what
+came out:
+
+```
+user 10001:10001 | nano_cpus 1000000000 | memory 3221225472 | memswap 3221225472
+pids 256 | read_only true | cap_drop [ALL] | cap_add <no value>
+security_opt [no-new-privileges:true] | ulimits [nofile 1024/2048]
+tmpfs {"/blobs":"size=256m,mode=1777,noexec,nosuid,nodev",
+       "/tmp":"size=64m,mode=1777,nosuid,nodev"}
+networks ["web_dpasp-instances"]
+```
+
+and from inside it:
+
+- `id` → `uid=10001(runner) gid=10001(runner)`, and `CapEff: 0000000000000000`
+  — an empty capability set, not merely a reduced one;
+- `touch /nope` → `Read-only file system`; `/tmp` and `/blobs` writable;
+- the cgroup agrees: `cpu.max 100000`, `memory.max 3221225472`,
+  `pids.max 256`;
+- writing 300 MB into `/blobs` stops at 256 MiB, and `/tmp` at 64 MiB;
+- **`/proc/net/route` is empty — no default route at all**, and a TCP connect
+  out fails with `Network is unreachable`. With
+  `DPASP_RUNNER_ALLOW_NETWORK=1` the same container gains `eth1` and a
+  default route, which is the difference that variable is supposed to make;
+- from a *peer* container on the same internal network — the frontend's
+  position — `dpasp-instance-<id>` resolves, `POST /blob/list` answers, and a
+  real query returns ℙ(burglary | alarm) = 0.8333.
+
+`deleteContainer` removes the container; `removeStaleContainers` sweeps by
+label. A container attached to both `dpasp-instances` (internal) and `cm`
+publishes its port normally — checked in both attachment orders, since that
+is what the frontend depends on.
+
+The same setup was used to check that a runner which *fails* is not handed
+out. Against an image whose command exits immediately, `createContainer`
+answers
+
+```
+The runner container 0a6f71c46b21 is exited (exit code 3) instead of running,
+so it was removed rather than handed out. Its last output was:
+  | uvicorn: error: could not start
+```
+
+and leaves nothing behind. The first version of that check passed a dying
+container as healthy: a container that exits ~50 ms after `start()` still
+reads `running` on the first `reload()`, so the wait succeeded before the
+process had failed. Hence `DPASP_RUNNER_START_GRACE` — wait, re-check, and
+only then hand it over. Killing pooled containers behind the manager's back
+and asking for one confirms the other half: the dead ones are skipped and the
+container that comes back is `running`.
+
+The one thing that could not be checked is **building the images**: the
+container registry is blocked by egress policy from this environment
+(`registry-1.docker.io` answers 403 to CONNECT), so `ubuntu:jammy` and
+`node:20-alpine` cannot be pulled. The runner used above was a stand-in image
+whose final stage is identical to the real one — same `useradd`, same
+`/blobs` ownership, same `USER`, same port, same `CMD` — built on a base
+imported from the test machine's own filesystem.
+
+### What this does not do
+
+The container manager still mounts the Docker socket — the web tier can
+control the daemon, which is the largest remaining hole and is in *Known
+gaps*. Nothing here limits disk I/O bandwidth or the number of containers a
+single visitor can cause to be created, either; `pruneContainers` exists for
+the latter but nothing calls it.
+
+## Semantics come from the program
+
+There are no semantics controls in the toolbar. A program says which
+semantics it wants, in its own text:
+
+```prolog
+#semantics maxent.              % probabilistic: credal (default) or maxent
+#semantics lstable.             % logic: stable (default), partial, lstable, smproblog
+#semantics lstable, maxent.     % both
+```
+
+This is not only a matter of taste. dPASP's parser pre-scans the source for
+the directive and lets it override whatever the caller passed
+(`PreparsingTransformer` in `pasp/grammar.py`), so the dropdowns that used to
+sit in the toolbar were a second and weaker source of truth: open a program
+containing `#semantics maxent.`, leave the dropdown on "credal", and the
+toolbar would say credal while the run used max-entropy.
+
+So `POST /run` now takes `{code}` and nothing else, and the two pills in the
+output panel's header **report** what dPASP used — read back from the parsed
+program, not echoed from the request. Change the directive, run again, and
+the pills change with it; the query table switches between a bounds pair and
+a single probability at the same time.
+
+### Downloading a program
+
+The download button in the toolbar saves the open file to your machine, under
+its own name. It saves the buffer — including edits you have not run yet —
+with one exception: a file open as a **prefix** (see the line limit below) is
+fetched whole from the runner first, because handing someone a silently
+truncated copy of their own data file is worse than making them wait a
+moment. `planDownload` in `editor/src/lib/download.ts` is that decision, and
+it has tests.
 
 ## Files, and the editor's line limit
 
@@ -558,14 +915,16 @@ named. It used to overwrite silently.
 ## Tests
 
 ```bash
-cd web/editor && npm test              # 59 tests: pasp tokenizer, examples, limits
+cd web/editor && npm test              # 66 tests: tokenizer, examples, limits,
+                                       #     runner URL, download
 cd web/editor && npm run check         # svelte-check: 0 errors
 
 # backend tests need the test-only extras:
 #   cd web/backend && pip install -r requirements-dev.txt
 cd web/backend && python3 -m pytest test_main.py      #  6: startup, readiness
-cd web/backend/containerManager && python3 -m pytest  # 22: queue, lifecycle, env
-cd web/backend/dPaspRunner && python3 -m pytest       # 37: result format, limits,
+cd web/backend/containerManager && python3 -m pytest  # 55: queue, lifecycle, limits,
+                                                      #     liveness, network choice
+cd web/backend/dPaspRunner && python3 -m pytest       # 42: result format, limits,
                                                       #     blob endpoints
 ```
 
@@ -613,12 +972,14 @@ unless the replacement is API-compatible. The tempting fix here —
 `rimraf(target, callback)` while rimraf 4+ exports an object rather than a
 callable. It appears to work only because `sorcery` never calls that path.
 
-A note on the `editor_node_modules` volume: because it persists, a change to
-`package.json` needs both the image and the volume refreshed.
-
-```bash
-docker compose down -v && docker compose --profile dpasp up --build
-```
+A note on the `editor_node_modules` volume: it persists, and Docker fills a
+named volume from the image only when the volume is *empty*, so it used to go
+stale the moment `package.json` changed — `docker compose down -v` was part
+of the ritual, and forgetting it broke the dev server outright (see the
+troubleshooting entry above). The dev image now keeps its installed tree at
+`/opt/node_modules` and its entrypoint copies that into the volume whenever
+the lockfile's hash differs from the one stamped there. `up --build` is
+enough.
 
 ## Known gaps
 
@@ -629,17 +990,16 @@ docker compose down -v && docker compose --profile dpasp up --build
   version bump, so clearing them means a Svelte 5 + SvelteKit 2 + Vite 5
   migration rather than a dependency tweak. Deprecation warnings are already
   clear; this is the remaining dependency debt.
-- **Runner containers have no resource limits.** `containerManager` creates
-  them with `client.containers.run(...)` and no `cpu_quota`, `mem_limit`,
-  `pids_limit`, `cap_drop` or `read_only`. The per-run timeout and rlimit
-  above bound one program; they do not bound a container.
+- **The container manager mounts the Docker socket**, which gives the web tier
+  root-equivalent control of the host. With the runners themselves now
+  bounded (see *What bounds a runner*), this is the largest remaining hole: a
+  socket proxy restricted to the calls the manager actually makes, or a
+  rootless daemon, is the usual answer.
 - **`pruneContainers` is never called.** Nothing schedules it, so containers
   live until the process exits rather than expiring after their configured
   lifetime. They are at least removed rather than left stopped now, and
   leftovers are swept at startup, but nothing enforces the lifetime while the
   manager runs.
-- **The container manager mounts the Docker socket**, which gives the web tier
-  root-equivalent control of the host.
 - **Learning is untested here.** A `#learn` program is dispatched correctly
   (`Program.__call__` handles it) but needs PyTorch and uploaded data; the
   result format reports it only through the `learned` flag.

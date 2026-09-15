@@ -172,9 +172,10 @@ def main() -> int:
     result_path = sys.argv[1]
 
     request = json.loads(sys.stdin.read() or "{}")
-    sem = request.get("sem") or "stable"
-    psem = request.get("psem") or "credal"
     code = request.get("code") or ""
+    # dPASP's own defaults, reported if the program does not parse. Once it
+    # does, both are read back from the parsed program — see below.
+    sem, psem = "stable", "credal"
     cwd = request.get("cwd")
     mem_limit_mb = int(request.get("mem_limit_mb") or DEFAULT_MEM_LIMIT_MB)
 
@@ -207,20 +208,28 @@ def main() -> int:
     sys.stdout.flush()
 
     try:
-        program = pasp.parse(code, from_str=True, semantics=sem)
+        # No `semantics=` argument: the program decides. dPASP pre-scans the
+        # source for a `#semantics` directive and lets it override that
+        # argument anyway, so passing one only created a second place where
+        # the answer could come from — and the editor used to have dropdowns
+        # doing exactly that, silently disagreeing with the program in front
+        # of the user.
+        program = pasp.parse(code, from_str=True)
     except Exception as exc:
         result["error"] = error_payload("parse", exc)
         write_result(result_path, result, started)
         return 0
 
     try:
-        # A `#semantics` directive in the program wins over the UI selection,
-        # matching the behaviour of the `pasp` command-line interpreter.
+        # Report what dPASP actually used, read back from the parsed program
+        # rather than echoed from the request. `program.semantics` is the
+        # logic semantics after any `#semantics lstable.`; the probabilistic
+        # half lands in `directives["psemantics"]` when declared, and is
+        # credal when it is not.
+        result["sem"] = program.semantics.name.lower()
         declared = program.directives.get("psemantics") if program.directives else None
         if declared:
             result["psem"] = declared.get("psemantics", psem)
-        else:
-            program.directives["psemantics"] = {"psemantics": psem}
 
         result["learned"] = bool(program.directives and "learn" in program.directives)
 

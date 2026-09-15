@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Toolbar, ToolbarButton, Button, Dropdown, Radio, Spinner } from 'flowbite-svelte';
-  import { PlayOutline, ChevronDownSolid } from 'flowbite-svelte-icons';
+  import { Toolbar, ToolbarButton, Spinner } from 'flowbite-svelte';
+  import { PlayOutline, DownloadSolid } from 'flowbite-svelte-icons';
   import {
     currentFile,
     currentFileContent,
@@ -9,30 +9,58 @@
     running
   } from '$lib/stores/editor';
   import { formatCount } from '$lib/limits';
+  import { planDownload, saveTextAsFile } from '$lib/download';
   import type { RunResult } from '$lib/types';
 
-  interface OptionGroup {
-    label: string;
-    values: string[];
-    /** Index of the selected value. */
-    index: number;
+  /**
+   * There are no semantics controls here any more.
+   *
+   * dPASP reads `#semantics` from the program itself — its parser pre-scans
+   * the source and lets the directive override whatever the caller asked for
+   * — so the dropdowns that used to sit here were a second, weaker source of
+   * truth. On a program containing `#semantics maxent.` the toolbar would
+   * cheerfully say "credal" while the run used max-entropy. The semantics in
+   * force are now reported by the output panel, from the parsed program.
+   */
+
+  /** True while the whole file is being fetched for a download. */
+  let downloading = false;
+
+  async function download() {
+    const plan = planDownload($currentFile, $currentFileTruncation !== null);
+    if (!plan || downloading) return;
+
+    if (!plan.needsFullFile) {
+      saveTextAsFile(plan.filename, $currentFileContent ?? '');
+      return;
+    }
+
+    // The editor is showing a prefix. Ask the runner for the whole file
+    // rather than saving what is on screen.
+    downloading = true;
+    try {
+      const response = await fetch('/api/instance/blob/fetch', {
+        method: 'POST',
+        body: JSON.stringify({ filename: plan.filename }),
+        headers: { 'content-type': 'application/json' }
+      });
+      const body = await response.json();
+      if (typeof body?.content !== 'string') throw new Error('no content in the reply');
+      saveTextAsFile(plan.filename, body.content);
+    } catch (e) {
+      runResult.set(
+        errorResult(
+          'DownloadFailed',
+          `Could not fetch ${plan.filename} from the runner to download it in full. ` +
+            'The editor is only showing part of that file, so saving what is on ' +
+            'screen would give you a truncated copy.'
+        )
+      );
+    } finally {
+      downloading = false;
+    }
   }
 
-  // Kept in sync with SEMANTICS/PSEMANTICS in backend/dPaspRunner/main.py.
-  let groups: OptionGroup[] = [
-    { label: 'Semantics', values: ['stable', 'partial', 'lstable', 'smproblog'], index: 0 },
-    { label: 'PSemantics', values: ['credal', 'maxent'], index: 0 }
-  ];
-
-  $: sem = groups[0].values[groups[0].index];
-  $: psem = groups[1].values[groups[1].index];
-
-  function select(group: OptionGroup, index: number) {
-    group.index = index;
-    groups = groups;
-  }
-
-  /** Persists the buffer so a run always executes what is on screen. */
   async function saveCurrentFile() {
     const filename = $currentFile;
     if (!filename) return;
@@ -56,8 +84,6 @@
     if (cut) {
       runResult.set(
         errorResult(
-          sem,
-          psem,
           'TruncatedFile',
           `${$currentFile} is open read-only: the editor is showing its first ` +
             `${formatCount(cut.shownLines)} of ${formatCount(cut.totalLines)} lines. ` +
@@ -73,9 +99,11 @@
 
       const code = ($currentFileContent ?? '') + '\n';
 
+      // The program is the whole request: semantics come from its own
+      // `#semantics` directive, and the reply reports which were used.
       const response = await fetch('/api/instance/run', {
         method: 'POST',
-        body: JSON.stringify({ sem, psem, code }),
+        body: JSON.stringify({ code }),
         headers: { 'content-type': 'application/json' }
       });
 
@@ -94,8 +122,6 @@
       } else {
         runResult.set(
           transportError(
-            sem,
-            psem,
             response.ok
               ? 'The runner returned a response that was not valid JSON.'
               : `The runner replied ${response.status}.`
@@ -103,19 +129,21 @@
         );
       }
     } catch (e) {
-      runResult.set(transportError(sem, psem, String(e)));
+      runResult.set(transportError(String(e)));
     } finally {
       running.set(false);
     }
   }
 
   /** A failed-run body, so one renderer handles every way a run can fail. */
-  function errorResult(sem: string, psem: string, type: string, message: string): RunResult {
+  function errorResult(type: string, message: string): RunResult {
     return {
       ok: false,
-      sem,
-      psem,
-      interval: psem === 'credal',
+      // Nothing was parsed, so these are dPASP's defaults rather than a
+      // report of anything.
+      sem: 'stable',
+      psem: 'credal',
+      interval: true,
       learned: false,
       elapsed_ms: 0,
       queries: [],
@@ -124,10 +152,8 @@
     };
   }
 
-  function transportError(sem: string, psem: string, message: string): RunResult {
+  function transportError(message: string): RunResult {
     return errorResult(
-      sem,
-      psem,
       'TransportError',
       `${message}\n\nThe dPASP runner may still be starting up. Try again in a moment.`
     );
@@ -136,48 +162,92 @@
 
 <Toolbar>
   <div class="flex-container">
-    {#each groups as group}
-      <Button class="dark:bg-gray-900 text-primary-500 dark:hover:bg-gray-700">
-        {group.label}: {group.values[group.index]}
-        <ChevronDownSolid class="w-3 h-3 ml-2 text-white dark:text-white" />
-      </Button>
-      <Dropdown class="w-44 p-3 space-y-3 text-sm">
-        {#each group.values as value, index}
-          <li>
-            <Radio
-              name={group.label}
-              checked={group.index === index}
-              on:click={() => select(group, index)}>{value}</Radio
-            >
-          </li>
-        {/each}
-      </Dropdown>
-    {/each}
-  </div>
-  <!-- flowbite gives a disabled ToolbarButton no styling of its own, so the
-       class below is what stops an unusable play button from looking ready. -->
-  <ToolbarButton
-    name="run"
-    slot="end"
-    color="green"
-    disabled={$running || $currentFileTruncation !== null}
-    class={$currentFileTruncation ? 'opacity-40 cursor-not-allowed' : ''}
-    on:click={submit}
-    title={$currentFileTruncation
-      ? 'This file is too long to open whole, so only part of it is on screen. Running that part would not be running the program.'
-      : 'Run the program'}
-  >
-    {#if $running}
-      <Spinner class="w-5 h-5" size={6} />
+    {#if $currentFile}
+      <span class="filename" title="The open file">{$currentFile}</span>
+      {#if $currentFileTruncation}
+        <span class="badge">partial view</span>
+      {/if}
     {:else}
-      <PlayOutline class="w-5 h-5" />
+      <span class="filename empty">no file open</span>
     {/if}
-  </ToolbarButton>
+  </div>
+
+  <!-- One element, not two: flowbite's Toolbar is `justify-between`, and each
+       child of the end slot becomes a flex child of it — two buttons would be
+       pushed apart, one landing in the middle of the bar. -->
+  <div class="actions" slot="end">
+    <ToolbarButton
+      name="download"
+      color="default"
+      disabled={!$currentFile || downloading}
+      class={!$currentFile || downloading ? 'opacity-40 cursor-not-allowed' : ''}
+      on:click={download}
+      title={$currentFileTruncation
+        ? 'Download the whole file — more than the editor is showing'
+        : 'Download this program'}
+    >
+      {#if downloading}
+        <Spinner class="w-5 h-5" size={6} />
+      {:else}
+        <DownloadSolid class="w-5 h-5" />
+      {/if}
+    </ToolbarButton>
+
+    <!-- flowbite gives a disabled ToolbarButton no styling of its own, so the
+         class below is what stops an unusable play button from looking ready. -->
+    <ToolbarButton
+      name="run"
+      color="green"
+      disabled={$running || $currentFileTruncation !== null}
+      class={$currentFileTruncation ? 'opacity-40 cursor-not-allowed' : ''}
+      on:click={submit}
+      title={$currentFileTruncation
+        ? 'This file is too long to open whole, so only part of it is on screen. Running that part would not be running the program.'
+        : 'Run the program'}
+    >
+      {#if $running}
+        <Spinner class="w-5 h-5" size={6} />
+      {:else}
+        <PlayOutline class="w-5 h-5" />
+      {/if}
+    </ToolbarButton>
+  </div>
 </Toolbar>
 
 <style>
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
   .flex-container {
     display: flex;
-    gap: 20px;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .filename {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    color: #d6d6d6;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .filename.empty {
+    color: #7a7a7a;
+    font-style: italic;
+  }
+
+  .badge {
+    padding: 1px 7px;
+    border: 1px solid #d19a66;
+    border-radius: 999px;
+    color: #d19a66;
+    font-size: 11px;
+    white-space: nowrap;
   }
 </style>

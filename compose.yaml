@@ -1,14 +1,31 @@
+# Everything the container manager needs to configure the runner containers
+# it creates. Held here rather than repeated per service, because both
+# managers (real and mock) take the same set and the list is long enough that
+# keeping two copies in step would not last.
+#
+# The first three are forwarded *into* each runner (see
+# containerManager.RUNNER_ENV_KEYS); the DPASP_RUNNER_* ones are read by the
+# manager itself and become the container's limits. `.env.example` documents
+# all of them.
+x-runner-config: &runner-config
+  DPASP_RUN_TIMEOUT: ${DPASP_RUN_TIMEOUT:-300}
+  DPASP_RUN_MEM_MB: ${DPASP_RUN_MEM_MB:-1024}
+  DPASP_MAX_OUTPUT: ${DPASP_MAX_OUTPUT:-65536}
+  DPASP_RUNNER_CPUS: ${DPASP_RUNNER_CPUS:-1.0}
+  DPASP_RUNNER_MEM: ${DPASP_RUNNER_MEM:-3g}
+  DPASP_RUNNER_PIDS: ${DPASP_RUNNER_PIDS:-256}
+  DPASP_RUNNER_TMPFS_MB: ${DPASP_RUNNER_TMPFS_MB:-256}
+  DPASP_RUNNER_READONLY: ${DPASP_RUNNER_READONLY:-1}
+  # Off by default: runners sit on an internal network with no route out.
+  # Set to 1 to attach the default bridge as well, which the MNIST example
+  # and any `#learn` from a URL need.
+  DPASP_RUNNER_ALLOW_NETWORK: ${DPASP_RUNNER_ALLOW_NETWORK:-0}
+
 services:
   container-manager: &cm
     environment:
+      <<: *runner-config
       RUNNER_TARGET: dpasp
-      # Forwarded into every runner container this creates (see
-      # containerManager.RUNNER_ENV_KEYS). Runner containers are not Compose
-      # services, so this is the only way to configure them without editing
-      # dPaspRunner/Dockerfile. Override in a `.env` next to this file.
-      DPASP_RUN_TIMEOUT: ${DPASP_RUN_TIMEOUT:-300}
-      DPASP_RUN_MEM_MB: ${DPASP_RUN_MEM_MB:-1024}
-      DPASP_MAX_OUTPUT: ${DPASP_MAX_OUTPUT:-65536}
     build:
       context: backend
       dockerfile: Dockerfile
@@ -42,10 +59,8 @@ services:
     profiles:
       - mock
     environment:
+      <<: *runner-config
       RUNNER_TARGET: mock
-      DPASP_RUN_TIMEOUT: ${DPASP_RUN_TIMEOUT:-300}
-      DPASP_RUN_MEM_MB: ${DPASP_RUN_MEM_MB:-1024}
-      DPASP_MAX_OUTPUT: ${DPASP_MAX_OUTPUT:-65536}
     networks:
       cm:
         aliases:
@@ -75,8 +90,11 @@ services:
       # `npm install` — and print its deprecation and version notices — on
       # every start.
       #
-      # After changing package.json, refresh the image and this volume:
-      #   docker compose down -v && docker compose --profile dpasp up --build
+      # Docker fills a named volume from the image only when the volume is
+      # empty, so this one used to go stale as soon as package.json changed.
+      # The dev image's entrypoint now refreshes it from /opt/node_modules
+      # whenever the lockfile's hash differs from the stamp inside it, so
+      # `up --build` is enough and `down -v` is not needed.
       - editor_node_modules:/app/node_modules
     # OAuth is optional: with none of these set, every visitor gets an
     # anonymous session and the sign-in link is hidden. To enable it, put the
@@ -149,7 +167,29 @@ volumes:
   editor_node_modules:
 
 networks:
+  # The frontend reaches the container manager over this one, and it is where
+  # the frontend's published port and its own route out live.
   cm:
     driver: bridge
+
+  # Runner containers live here and nowhere else, which is what stops a dPASP
+  # program from reaching the network.
+  #
+  # `internal: true` is the whole point: Docker gives such a network no
+  # gateway, so a container attached only to it has no route off the host.
+  # The manager attaches runners to this network *at creation*
+  # (`containers.run(network=...)`) rather than afterwards, because a
+  # container Docker attaches by default lands on the default bridge, which
+  # is masqueraded — it would have the internet before anything else ran.
+  #
+  # The frontend is on this network too, so that it can reach the runners, and
+  # on `cm` as well. A container with both keeps its default route and its
+  # published ports on the non-internal one, so publishing 8000 is unaffected.
+  #
+  # To let programs reach the internet again — the MNIST example downloads a
+  # dataset, and `learning.pasp` reads a CSV over https — set
+  # DPASP_RUNNER_ALLOW_NETWORK=1 rather than changing this: the manager then
+  # attaches the default bridge to each runner as well.
   dpasp-instances:
     driver: bridge
+    internal: true

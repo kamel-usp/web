@@ -61,8 +61,19 @@
       {#if $running}
         <span class="pill running">running…</span>
       {:else if result}
-        <span class="pill">{result.sem}</span>
-        <span class="pill">{result.psem}</span>
+        <!-- Reported by the runner from the parsed program, not chosen here:
+             a `#semantics` directive decides, and these say what it decided.
+             They replaced the toolbar dropdowns, which could disagree with
+             the program on screen. -->
+        <span class="pill" title="Logic semantics used — set with #semantics in the program">
+          {result.sem}
+        </span>
+        <span
+          class="pill"
+          title="Probabilistic semantics used — set with #semantics in the program"
+        >
+          {result.psem}
+        </span>
         {#if result.learned}<span class="pill accent">learned</span>{/if}
         <span class="elapsed">{result.elapsed_ms} ms</span>
       {/if}

@@ -1,10 +1,6 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
-// This file runs in Node, but the project does not depend on `@types/node`.
-// Declaring the one global it uses is cheaper than adding the package.
-declare const process: { env: Record<string, string | undefined> };
-
 /**
  * Hostnames the dev and preview servers will answer to, from
  * `DPASP_ALLOWED_HOSTS` (comma-separated).

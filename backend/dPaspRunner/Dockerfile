@@ -29,19 +29,53 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # A current pip, so that modern manylinux wheel tags resolve.
 RUN python3 -m pip install --no-cache-dir --upgrade pip
 
+# The account the server runs as. A dPASP program may contain a
+# `#python ... #end.` block, which dPASP executes — so whatever this process
+# can do, a visitor's program can do. It should not be root.
+#
+# The uid is fixed rather than left to `useradd`, because the container
+# manager passes `user="10001:10001"` when it creates the container: the image
+# and the manager have to agree, and a number is the only thing Docker
+# compares. Nothing else in the image belongs to this user; everything it
+# needs to read is world-readable, and the two paths it writes to are mounted
+# at run time.
+#
+# 10001 rather than 1000 because distributions hand out 1000 themselves —
+# ubuntu:jammy leaves it free, but ubuntu:24.04 ships a user that holds it,
+# so a base-image bump would break the build with "UID 1000 is not unique".
+RUN groupadd --gid 10001 runner \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin runner
+
+# Port 8000, not 80. Binding below 1024 needs CAP_NET_BIND_SERVICE, and the
+# point of running as `runner` is to hold no capabilities at all. The editor
+# builds `http://dpasp-instance-<id>:8000`, so this number and the one in
+# `editor/src/lib/runnerUrl.ts` must match — a vitest case reads this file to
+# check that they do.
+ENV RUNNER_PORT=8000
+
 # --------------------------------------------------------------------------
 FROM base AS mock
 
 COPY requirements.txt ./
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
-RUN mkdir /blobs
+# Owned by `runner`, because with DPASP_RUNNER_READONLY=0 this directory is
+# the image's own and nothing else makes it writable. In the default
+# configuration the manager mounts a tmpfs over it (mode 1777), so the
+# ownership here is what covers the other case.
+RUN mkdir /blobs && chown runner:runner /blobs
 
 COPY . .
 
+# See the dpasp stage: `COPY` keeps the build host's mode bits, and the server
+# no longer runs as root.
+RUN chmod -R a+rX /app
+
 ENV MOCK=y
 
-CMD [ "uvicorn", "--host", "0.0.0.0", "--port", "80", "main:app" ]
+USER runner
+EXPOSE 8000
+CMD [ "uvicorn", "--host", "0.0.0.0", "--port", "8000", "main:app" ]
 
 # --------------------------------------------------------------------------
 FROM base AS dpasp
@@ -128,10 +162,39 @@ RUN python3 -c "import pasp; P = pasp.parse('0.5::a. #query(a)', from_str=True);
 COPY requirements.txt ./
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
-RUN mkdir /blobs
+# See the mock stage: ownership matters only when no tmpfs is mounted over it.
+RUN mkdir /blobs && chown runner:runner /blobs
 
 COPY . .
 
+# `COPY` preserves the mode bits of the files in the build context, and those
+# come from whatever umask the developer's checkout was made with. Under the
+# usual 022 they are 0644 and everything works; under 077 they arrive as 0600,
+# owned by root — invisible to `runner`. That cost nothing while the server ran
+# as root (root ignores permission bits) and became fatal the moment it did
+# not:
+#
+#     PermissionError: [Errno 13] Permission denied: '/app/main.py'
+#
+# raised by uvicorn while importing `main:app`, so the container exits at once.
+# An image must not depend on the mode bits of the machine that built it.
+#
+# `a+rX` — capital X — adds the execute bit only where one is already set, so
+# directories stay traversable and scripts stay runnable without making every
+# .py file executable.
+RUN chmod -R a+rX /app
+
+# Prove it, here, rather than at a visitor's first query. `su -s` overrides the
+# nologin shell, which exists to stop anyone logging in as this account, not to
+# stop the build checking its own work.
+RUN su -s /bin/sh runner -c 'cat /app/main.py > /dev/null' \
+ || { echo "The runner user cannot read /app — check the chmod above." >&2; \
+      ls -la /app >&2; exit 1; }
+
 ENV MOCK=n
 
-CMD [ "uvicorn", "--host", "0.0.0.0", "--port", "80", "main:app" ]
+# Everything above this line needed root: apt, pip, the compile of pasp-plp.
+# Nothing below it does.
+USER runner
+EXPOSE 8000
+CMD [ "uvicorn", "--host", "0.0.0.0", "--port", "8000", "main:app" ]

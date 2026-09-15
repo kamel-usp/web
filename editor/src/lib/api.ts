@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import { runnerUrl } from '$lib/runnerUrl';
 
 /** Raised with the container manager's own explanation, when it gives one. */
 export class RunnerUnavailable extends Error {
@@ -57,5 +58,5 @@ export async function get_user_dpasp_runner_url(userid: string): Promise<string>
   const { id } = (await response.json()) as { id: string };
   if (!id) throw new RunnerUnavailable('The container manager returned no container id.');
 
-  return `http://dpasp-instance-${id}`;
+  return runnerUrl(id);
 }

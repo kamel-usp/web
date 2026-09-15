@@ -13,13 +13,7 @@ app = FastAPI()
 #: referenced by its bare name from a `#python` block.
 BLOB_FOLDER = os.getenv("DPASP_BLOB_FOLDER", "/blobs/")
 
-SEMANTICS = ("stable", "partial", "lstable", "smproblog")
-PSEMANTICS = ("credal", "maxent")
-
-
 class RunRequest(BaseModel):
-    sem: str = "stable"
-    psem: str = "credal"
     code: str
 
 
@@ -27,15 +21,18 @@ class RunRequest(BaseModel):
 async def run_code(run_req: RunRequest):
     """Run a dPASP program and return a structured result.
 
+    The program is the whole request. Semantics used to arrive alongside it,
+    from dropdowns in the editor, but dPASP takes them from the program's own
+    `#semantics` directive regardless — so the request could contradict the
+    file, and the file always won. The result reports which semantics were
+    actually used.
+
     See `dpasp_api.run_program` for the response shape. Client errors in the
     program are reported in the body with `ok: False` rather than as HTTP
     errors, so that the editor can render them in its output panel.
     """
-    sem = run_req.sem if run_req.sem in SEMANTICS else "stable"
-    psem = run_req.psem if run_req.psem in PSEMANTICS else "credal"
-
     os.makedirs(BLOB_FOLDER, exist_ok=True)
-    return dpasp_api.run_program(sem, psem, run_req.code, cwd=BLOB_FOLDER)
+    return dpasp_api.run_program(run_req.code, cwd=BLOB_FOLDER)
 
 
 def blob_path(filename: str) -> str:

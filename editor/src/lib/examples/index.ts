@@ -45,7 +45,7 @@ export const EXAMPLES: Example[] = [
     label: 'Insomnia — credal bounds',
     filename: 'insomnia.pasp',
     description:
-      'The smallest program with genuinely non-degenerate credal bounds: two stable models make ℙ(work) an interval. Compare the credal and max-entropy semantics on it.',
+      'The smallest program with genuinely non-degenerate credal bounds: two stable models make ℙ(work) an interval. Add #semantics maxent. to see the same program collapse to a single value.',
     code: insomnia
   },
   {
