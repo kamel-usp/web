@@ -1,0 +1,15 @@
+# The container manager's image needs `main.py` and `containerManager/`.
+#
+# `dPaspRunner/` used to be in here because the manager built the runner image
+# from it at startup, sending that directory to the daemon as a build context.
+# Compose builds the runner image now — from `backend/dPaspRunner` directly —
+# so shipping a second copy of the runner's source inside the manager would
+# only be a copy that can go stale.
+dPaspRunner/
+dockerProxy/
+
+__pycache__/
+*.pyc
+.pytest_cache/
+requirements-dev.txt
+test_*.py

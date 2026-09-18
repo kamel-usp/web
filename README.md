@@ -8,11 +8,14 @@ read the query probabilities.
 
 ```
 web/
-├── compose.yaml            orchestration for the three pieces below
+├── compose.yaml            orchestration for the pieces below
 ├── editor/                 SvelteKit front end (port 8000)
 └── backend/
     ├── main.py             container manager (port 8001)
-    ├── containerManager/    one runner container per user, with a reaper
+    ├── containerManager/   one runner container per user, with a reaper
+    ├── dockerProxy/        the only container that holds the Docker socket;
+    │                       an allowlist in front of the daemon (port 2375,
+    │                       internal)
     └── dPaspRunner/        the runner image: FastAPI + dPASP (port 8000,
                             as a non-root user)
 ```
@@ -23,6 +26,8 @@ Request path for a run:
 browser
   → POST /api/instance/run                (SvelteKit server route)
     → GET  container-manager/container_for_user/<id>
+    →                                     (creating one, if needed, through
+    →                                      docker-proxy → the Docker daemon)
     → POST dpasp-instance-<cid>/run       (FastAPI in the user's container)
       → runner_worker.py                  (separate process, rlimited, killable)
         → pasp.parse / Program.__call__
@@ -50,17 +55,39 @@ cookie. To add persistent logins, copy `editor/.env.example`, fill it in, and
 put the values in a `.env` file next to `compose.yaml`; the sign-in link
 appears only once credentials are configured.
 
-#### The container manager needs a reachable Docker socket
+#### The stack needs a reachable Docker socket
 
-It creates the runner containers, so it mounts the host's Docker socket. If
-the daemon's socket is not at `/var/run/docker.sock` — which is the case under
-colima, where it lives beneath `~/.colima/<profile>/` — point `DOCKER_SOCKET`
-at the real one, in a `.env` file next to `compose.yaml` or exported:
+Runner containers are created through the Docker API, so the socket has to be
+mounted — into `docker-proxy`, which is the only service that gets it (see
+*What bounds the container manager*). If the daemon's socket is not at
+`/var/run/docker.sock` — which is the case under colima, where it lives
+beneath `~/.colima/<profile>/` — point `DOCKER_SOCKET` at the real one, in a
+`.env` file next to `compose.yaml` or exported:
 
 ```bash
 DOCKER_SOCKET=$(docker context inspect -f '{{.Endpoints.docker.Host}}' \
   | sed 's|^unix://||')
 ```
+
+#### `refused by the dPASP docker proxy: …`
+
+The manager asked the daemon for something the proxy's allowlist does not
+cover, and `docker compose logs docker-proxy` has the matching `DENY` line
+with the reason. This is working as intended — it means a call was added to
+the manager without a corresponding decision in
+`backend/dockerProxy/policy.py`.
+
+Allow it there, deliberately and with a test, rather than by widening a rule:
+the file is short on purpose, and `policy.decide` is a pure function, so a new
+rule costs one test in `test_policy.py` and one line in the allowlist.
+
+```bash
+docker compose --profile dpasp logs docker-proxy | grep DENY
+```
+
+If the manager instead prints **`WARNING: Docker access is a direct socket`**
+at startup, it is talking to the daemon directly and the proxy is not in the
+path at all — check that `DOCKER_HOST` reached it (`docker compose config`).
 
 #### Where clingo comes from (and why not from apt)
 
@@ -211,30 +238,53 @@ If you see it again, run `npm run check` (or any of the others) once in
 
 #### The editor says it cannot obtain a runner, or the log shows `ECONNREFUSED`
 
-On a cold start this is expected for a few minutes, and the first build is the
-slow one: it compiles dPASP against clingo and downloads PyTorch. Watch it:
+On a cold start the first **image build** is the slow part — several minutes,
+since it compiles dPASP against clingo and downloads PyTorch. That build is
+Compose's, so it happens before anything starts and you watch it in the `up`
+output. The manager's own warmup afterwards takes seconds:
 
 ```bash
-docker compose logs -f container-manager     # "Done building image!" when finished
-curl localhost:8001/health                   # {"status":"building"|"ready"|"error"}
+curl localhost:8001/health     # {"status":"starting"|"ready"|"error"}
+docker compose logs -f container-manager
 ```
 
-The container manager builds the runner image during its own startup, but it
-no longer does so *inside* uvicorn's lifespan. Uvicorn binds its listening
-socket only after the lifespan's startup block returns, so building there made
-the whole API refuse connections for the duration — the frontend logged
+The manager still does its Docker work in a background task rather than in
+uvicorn's lifespan. Uvicorn binds its listening socket only after the
+lifespan's startup block returns, so anything slow inline there makes the
+whole API refuse connections — which the frontend logged as
 
 ```
 container-manager lookup failed: TypeError: fetch failed
   [cause]: Error: connect ECONNREFUSED 172.18.0.3:80
 ```
 
-which says nothing about the real cause. The build is now awaited as a
-background task: the API answers immediately and returns `503` with an
-explanation while it warms up, and the editor displays that explanation.
+saying nothing about the real cause. Detached, the API answers immediately and
+returns `503` with an explanation the editor displays. (The build used to live
+there too, which is what made that window minutes long rather than seconds.)
 
-If `/health` reports `"status": "error"`, the build itself failed and `detail`
-carries the reason.
+If `/health` reports `"status": "error"`, `detail` carries the reason. The
+most likely one now is that the runner image was never built:
+
+```
+The runner image 'dpasp-runner' does not exist. Compose builds it as the
+`runner-image` service …
+```
+
+which means the stack was started without a profile, or with a Compose file
+that predates that service.
+
+#### `runner-image-1 exited with code 0`
+
+Expected, and the point of that service. `runner-image` exists so that
+**Compose** builds the runner image; the manager is no longer allowed to.
+Since a Compose service that builds an image also gets a container, its
+`entrypoint` is overridden with an echo and it exits at once — the container
+manager waits for exactly that, with `condition: service_completed_
+successfully`, so the image is guaranteed to exist before it looks for it.
+
+A runner container that actually served here would be the bug: unmanaged,
+unbounded, and on the wrong network. The override is runtime only; the image
+keeps its own `CMD`, which is what the real runners run.
 
 #### `getaddrinfo ENOTFOUND dpasp-instance-<id>`
 
@@ -316,11 +366,8 @@ The image no longer depends on the answer: both stages run
 than at a visitor's first query. `backend/dPaspRunner/test_dockerfile.py`
 keeps both in place without needing a daemon.
 
-The runner image is **not** a Compose service — the container manager builds
-it through the Docker API at its own startup, from the copy of
-`backend/dPaspRunner` inside the manager image. So the fix travels host →
-manager image → runner image, and picking it up means rebuilding both, which
-is what `up --build` does:
+The runner image is the `runner-image` Compose service, built straight from
+`backend/dPaspRunner`, so `up --build` picks the fix up:
 
 ```bash
 docker compose --profile dpasp down
@@ -328,8 +375,13 @@ docker ps -aq --filter label=dpasp.role=runner | xargs -r docker rm -f
 docker compose --profile dpasp up --build
 ```
 
-`down` first because the manager caches its `/health` error for the life of
-the process: rebuilding the image under a running manager changes nothing.
+`down` first because the manager caches its startup error for the life of the
+process: rebuilding the image under a running manager changes nothing.
+
+(This used to be worse. The manager built the image itself, from a *copy* of
+`backend/dPaspRunner` baked into its own image, so the mode bits travelled
+host → manager image → runner image and both had to be rebuilt. Moving the
+build to Compose removed that hop along with the build capability.)
 
 #### `failed to set up container networking: network <id> not found`
 
@@ -445,10 +497,11 @@ Two things to know about this target:
   be 512 kB — with that, any upload much over half a megabyte comes back as
   `413 Invalid request body`. The limit is raised in `compose.yaml`; raise it
   further for larger data files.
-- **The runner containers still have no resource limits** (see *Known gaps*).
-  On a shared machine that matters more than it does on a laptop: a runner
-  can use as much CPU and memory as the host will give it for up to
-  `DPASP_RUN_TIMEOUT` seconds, and it can reach the network.
+- **Runner containers are bounded, not root, and have no route out** — see
+  *What bounds a runner* for the numbers and *What bounds the container
+  manager* for what the web tier can ask the daemon to do. On a shared machine
+  the defaults are the interesting ones: 1 CPU and 3g per runner, and no
+  internet unless `DPASP_RUNNER_ALLOW_NETWORK=1`.
 
 #### Stopping it
 
@@ -771,11 +824,99 @@ imported from the test machine's own filesystem.
 
 ### What this does not do
 
-The container manager still mounts the Docker socket — the web tier can
-control the daemon, which is the largest remaining hole and is in *Known
-gaps*. Nothing here limits disk I/O bandwidth or the number of containers a
-single visitor can cause to be created, either; `pruneContainers` exists for
-the latter but nothing calls it.
+Nothing here limits disk I/O bandwidth or the number of containers a single
+visitor can cause to be created; `pruneContainers` exists for the latter but
+nothing calls it.
+
+## What bounds the container manager
+
+Bounding the runners left the *manager* as the softest thing in the stack. It
+created them through the Docker API, which meant `/var/run/docker.sock` was
+mounted into it — and that socket is root on the host. Anything able to reach
+it can ask for
+
+```json
+{"Image": "alpine", "HostConfig": {"Binds": ["/:/host"], "Privileged": true}}
+```
+
+and walk out onto the machine. Every limit in the section above is downstream
+of a process that could have skipped all of them.
+
+So the socket now lives in its own container. `docker-proxy`
+(`backend/dockerProxy/`) holds it and listens on an internal network that
+only the manager is attached to; the manager gets
+`DOCKER_HOST=tcp://docker-proxy:2375`. **The manager's own code did not
+change** — `docker.from_env()` reads that variable — which is the point: it
+makes the same calls, and the ones it should never have been able to make now
+fail with 403 instead of succeeding.
+
+`backend/dockerProxy/policy.py` is the entire policy, as one pure function of
+one HTTP request. Three kinds of rule:
+
+- **An allowlist.** `POST /containers/{id}/exec`, `GET /secrets`,
+  `POST /swarm/init`, `PUT /containers/{id}/archive` and several hundred
+  others are refused because they were never listed — not because anyone
+  thought to deny them.
+- **Forcing, not checking.** On `POST /containers/create` the dangerous
+  fields are *overwritten*. A validator is only as good as its author's
+  imagination; an overwrite does not care what was asked for. `Privileged` is
+  false because the proxy makes it false — likewise `Binds`, `Mounts`,
+  `VolumesFrom`, `Devices`, `CapAdd`, `SecurityOpt`, every `*Mode` namespace
+  field, `Sysctls`, `PortBindings`, `CgroupParent`, `Runtime`, and the
+  `MaskedPaths`/`ReadonlyPaths` that hide `/proc/kcore` (set to `null`, since
+  an empty list *unmasks* them). The image must be `dpasp-runner`, the name
+  must be `dpasp-instance-<id>`, the network must be the runner network, and
+  `User` is forced to 10001 — a third independent place, after the image's
+  `USER runner` and the manager's `user=`.
+- **Ownership.** Anything naming an existing container — inspect, logs, stop,
+  start, remove, network connect — is allowed only once the proxy has asked
+  the daemon whether that container carries `dpasp.role=runner`. Otherwise a
+  compromised manager could read the frontend's environment, which is where
+  `AUTH_SECRET` and the OAuth secrets live. Container *listing* has its label
+  filter forced, so a list cannot return anything else either.
+
+The one exception to ownership is that the manager may inspect **itself**:
+it reads its own Compose labels to resolve an ambiguous runner network. The
+proxy recognises it by comparing Compose project and service against its own
+labels, so a manager from a different stack on the same daemon is refused.
+
+The proxy is stdlib-only and installs nothing — the most privileged container
+in the stack has no dependency to audit — and Compose gives it `read_only`,
+`cap_drop: ALL`, `no-new-privileges` and a 64-process limit. It publishes no
+port: exposing it would hand the host's daemon to the network, a worse hole
+than the one it closes.
+
+### What is left
+
+A compromised manager can create, inspect and destroy *runners* — bounded
+ones, on an internal network, as uid 10001 — and nothing else.
+
+In particular it can no longer make the daemon **execute** anything of its
+choosing. `POST /build` was the last such primitive: a build runs a Dockerfile,
+which means `RUN` steps as root in a build container. It was on the allowlist
+only because the manager built the runner image at startup. Compose builds it
+now, as the `runner-image` service, so `ensureImage` does a lookup where there
+used to be a build, `/build` is off the allowlist entirely, and the manager's
+image no longer even carries a copy of `backend/dPaspRunner` to build from.
+
+The remaining calls are all *about containers we made*: create (rewritten),
+start, stop, remove, inspect, logs, and a network connect. Image endpoints are
+read-only — no create, no pull, no tag, no load, no commit, no prune.
+
+### Tested without a daemon
+
+`backend/dockerProxy/` has 49 tests and none of them need Docker. The policy
+is a pure function, so the escapes are asserted directly — "the request that
+reaches the daemon has `Privileged: false`", not "the request was rejected".
+Above that sits a fake daemon on a unix socket with the real proxy in front
+of it, driven by a real `docker-py` client, and
+`test_manager_through_proxy.py` drives the **real** `containerManager` module
+through the whole chain: it creates, inspects, sweeps and deletes as it
+normally does, and then tries to mount the host and is refused.
+
+The policy tests were checked against mutation: deleting the `Privileged`
+override, the `CapDrop`, the forced build tag, the network check or the
+forced list filter each makes exactly one test fail, by name.
 
 ## Semantics come from the program
 
@@ -922,9 +1063,11 @@ cd web/editor && npm run check         # svelte-check: 0 errors
 # backend tests need the test-only extras:
 #   cd web/backend && pip install -r requirements-dev.txt
 cd web/backend && python3 -m pytest test_main.py      #  6: startup, readiness
-cd web/backend/containerManager && python3 -m pytest  # 55: queue, lifecycle, limits,
+cd web/backend/containerManager && python3 -m pytest  # 59: queue, lifecycle, limits,
                                                       #     liveness, network choice
-cd web/backend/dPaspRunner && python3 -m pytest       # 42: result format, limits,
+cd web/backend/dockerProxy && python3 -m pytest       # 51: the socket policy, and the
+                                                      #     real manager driving it
+cd web/backend/dPaspRunner && python3 -m pytest       # 45: result format, limits,
                                                       #     blob endpoints
 ```
 
@@ -990,11 +1133,6 @@ enough.
   version bump, so clearing them means a Svelte 5 + SvelteKit 2 + Vite 5
   migration rather than a dependency tweak. Deprecation warnings are already
   clear; this is the remaining dependency debt.
-- **The container manager mounts the Docker socket**, which gives the web tier
-  root-equivalent control of the host. With the runners themselves now
-  bounded (see *What bounds a runner*), this is the largest remaining hole: a
-  socket proxy restricted to the calls the manager actually makes, or a
-  rootless daemon, is the usual answer.
 - **`pruneContainers` is never called.** Nothing schedules it, so containers
   live until the process exits rather than expiring after their configured
   lifetime. They are at least removed rather than left stopped now, and

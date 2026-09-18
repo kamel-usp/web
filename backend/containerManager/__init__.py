@@ -13,17 +13,38 @@ class dockerApi:
     def __init__(self):
         self.client = docker.from_env()
 
-    def build_image(self):
-        print(f"Building image (selected target:)", flush=True)
-        print (os.getenv("RUNNER_TARGET"))
+    #: The image runners are created from. Compose builds and tags it; this
+    #: process only ever looks it up.
+    RUNNER_IMAGE = "dpasp-runner"
+
+    def ensureImage(self):
+        """Check the runner image exists. Building it is Compose's job.
+
+        This used to call `images.build`, which meant the web tier could ask
+        the daemon to run a Dockerfile — `RUN` steps as root in a build
+        container, and a `t=` tag it chose. That was the last thing the socket
+        proxy had to allow, and the last way a compromised manager could make
+        the daemon execute something.
+
+        Compose builds it now, as the `runner-image` service, so the manager
+        holds no build capability at all and `POST /build` is off the
+        allowlist. All that is left here is the lookup — which is also the
+        check worth making, since a missing image would otherwise surface as
+        every container creation failing with a 404 nobody can read.
+        """
         try:
-            self.image_id = self.client.images.build(path="./dPaspRunner", tag="dpasp-runner", quiet=False, target=os.getenv("RUNNER_TARGET"))
-        except docker.errors.BuildError as e:
-            for line in e.build_log:
-                if 'stream' in line:
-                    print(line['stream'].strip(), flush=True)
-            raise e
-        print("Done building image!", flush=True)
+            image = self.client.images.get(dockerApi.RUNNER_IMAGE)
+        except docker.errors.ImageNotFound:
+            raise RuntimeError(
+                f"The runner image {dockerApi.RUNNER_IMAGE!r} does not exist. "
+                "Compose builds it as the `runner-image` service, so this "
+                "means the stack was started without it — bring it up with a "
+                "profile, which builds the image first:\n"
+                "    docker compose --profile dpasp up --build\n"
+                "or build that one service:\n"
+                "    docker compose --profile dpasp build runner-image"
+            ) from None
+        print(f"Runner image: {dockerApi.RUNNER_IMAGE} ({image.short_id})", flush=True)
 
     #: Marks every container this manager creates. Runner containers are made
     #: through the Docker API rather than by Compose, so `docker compose down`
@@ -207,6 +228,18 @@ class dockerApi:
             f"uid {limits['user']}, all capabilities dropped"
         ]
 
+        host = os.getenv("DOCKER_HOST", "")
+        if host.startswith(("tcp://", "http://")):
+            lines.append(f"Docker access: through {host} (the socket proxy).")
+        else:
+            lines.append(
+                "WARNING: Docker access is a direct socket"
+                + (f" ({host})" if host else " (/var/run/docker.sock)")
+                + ". That socket is root on the host, so a compromise of this "
+                "process is a compromise of the machine. Run the `docker-proxy` "
+                "service and set DOCKER_HOST to it; compose does both."
+            )
+
         if os.getenv("DPASP_RUNNER_ALLOW_NETWORK") == "1":
             lines.append(
                 "Runner network: OPEN. DPASP_RUNNER_ALLOW_NETWORK=1 attaches "
@@ -317,7 +350,7 @@ class dockerApi:
         runner_id = uuid.uuid4().hex[:12]
 
         container = self.client.containers.run(
-            "dpasp-runner",  # Specify the Docker image to use
+            dockerApi.RUNNER_IMAGE,  # built by Compose, checked in ensureImage
             detach=True,  # Run the container in detached mode
             name=dockerApi.runnerName(runner_id),
             # Naming the network here is what keeps the container off the
@@ -516,25 +549,27 @@ class containerManager:
         self.startup_error = None
 
     async def start(self):
-        """Build the runner image and fill the pool.
+        """Check the runner image, sweep leftovers, and fill the pool.
 
-        Kept out of `__init__` on purpose. Uvicorn does not bind its listening
-        socket until the lifespan's startup completes, so building the image
-        during startup made the whole container-manager API refuse
-        connections for as long as the build took — minutes on a cold cache,
-        since the runner image compiles dPASP and downloads PyTorch. The
-        frontend saw `ECONNREFUSED` instead of a message it could show.
+        Kept out of `__init__` on purpose, and still run as a background task.
+        That was originally because this method *built* the runner image:
+        uvicorn does not bind its listening socket until the lifespan's
+        startup completes, so a build here made the whole API refuse
+        connections for minutes and the frontend saw `ECONNREFUSED` rather
+        than something it could display.
 
-        Awaited as a background task, so the API answers immediately and can
-        report that it is still warming up. `build_image` is synchronous, so
-        it goes to a worker thread rather than blocking the event loop.
+        Compose builds the image now, so the slow part is gone — but
+        pre-allocating containers is still Docker work, and doing it detached
+        is what lets `/health` answer "starting" with a reason instead of the
+        API being silent. The Docker calls are synchronous, so they go to
+        worker threads rather than blocking the event loop.
         """
         try:
             if hasattr(self.docker_api, "describeLimits"):
                 for line in self.docker_api.describeLimits():
                     print(line, flush=True)
 
-            await asyncio.to_thread(self.docker_api.build_image)
+            await asyncio.to_thread(self.docker_api.ensureImage)
 
             # Runner containers from a previous run of this process are
             # orphans: the registry above lives only in memory. Clear them

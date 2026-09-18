@@ -8,6 +8,7 @@ Docker daemon: a stub stands in for `docker.from_env()`.
 """
 
 import docker
+from types import SimpleNamespace
 import pytest
 
 from containerManager import dockerApi
@@ -107,10 +108,25 @@ class FakeNetworks:
         return self.bridge
 
 
+class FakeImages:
+    """`client.images`, which the manager now only ever *reads*."""
+
+    def __init__(self, present=True):
+        self.present = present
+        self.asked = []
+
+    def get(self, name):
+        self.asked.append(name)
+        if not self.present:
+            raise docker.errors.ImageNotFound(f"no such image: {name}")
+        return SimpleNamespace(short_id="sha256:abc123")
+
+
 class FakeClient:
-    def __init__(self, containers, networks=None):
+    def __init__(self, containers, networks=None, images=None):
         self.containers = containers
         self.networks = networks or FakeNetworks()
+        self.images = images or FakeImages()
 
 
 def api_with(client):
@@ -118,6 +134,33 @@ def api_with(client):
     api = object.__new__(dockerApi)
     api.client = client
     return api
+
+
+# --------------------------------------------------------------------------
+# ensureImage
+# --------------------------------------------------------------------------
+
+def test_the_runner_image_is_looked_up_not_built():
+    """Compose builds it. The manager holds no build capability at all —
+    that is what let `POST /build` come off the socket proxy's allowlist."""
+    images = FakeImages()
+    api = api_with(FakeClient(FakeContainers(), images=images))
+
+    api.ensureImage()
+
+    assert images.asked == ["dpasp-runner"]
+    assert not hasattr(api, "build_image")
+
+
+def test_a_missing_runner_image_says_how_to_build_it():
+    api = api_with(FakeClient(FakeContainers(), images=FakeImages(present=False)))
+
+    with pytest.raises(RuntimeError) as raised:
+        api.ensureImage()
+
+    message = str(raised.value)
+    assert "runner-image" in message
+    assert "docker compose" in message
 
 
 # --------------------------------------------------------------------------
@@ -525,7 +568,8 @@ def test_memory_notation_is_understood():
     assert dockerApi.parseMemory("lots") == 0
 
 
-def test_the_startup_lines_name_the_limits_and_the_isolation():
+def test_the_startup_lines_name_the_limits_and_the_isolation(monkeypatch):
+    monkeypatch.setenv("DOCKER_HOST", "tcp://docker-proxy:2375")
     api = api_with(FakeClient(FakeContainers(FakeContainer())))
 
     lines = " ".join(api.describeLimits())
@@ -550,12 +594,37 @@ def test_a_program_budget_larger_than_the_container_is_flagged(monkeypatch):
     # nothing.
     monkeypatch.setenv("DPASP_RUN_MEM_MB", "4096")
     monkeypatch.setenv("DPASP_RUNNER_MEM", "1g")
+    monkeypatch.setenv("DOCKER_HOST", "tcp://docker-proxy:2375")
     api = api_with(FakeClient(FakeContainers(FakeContainer())))
 
     warnings = [line for line in api.describeLimits() if line.startswith("WARNING")]
 
     assert len(warnings) == 1
     assert "signal 9" in warnings[0]
+
+
+def test_talking_to_the_socket_directly_is_called_out_at_startup(monkeypatch):
+    """The socket is root on the host; the proxy exists so this is not normal.
+
+    A warning rather than a refusal: running without Compose, or against a
+    daemon on a laptop, is a legitimate thing to do while developing — it
+    just should not be quiet.
+    """
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    api = api_with(FakeClient(FakeContainers(FakeContainer())))
+
+    warnings = [line for line in api.describeLimits() if line.startswith("WARNING")]
+    assert len(warnings) == 1
+    assert "docker-proxy" in warnings[0]
+
+
+def test_going_through_the_proxy_is_reported_without_a_warning(monkeypatch):
+    monkeypatch.setenv("DOCKER_HOST", "tcp://docker-proxy:2375")
+    api = api_with(FakeClient(FakeContainers(FakeContainer())))
+
+    lines = api.describeLimits()
+    assert any("through tcp://docker-proxy:2375" in line for line in lines)
+    assert not any(line.startswith("WARNING") for line in lines)
 
 
 # --------------------------------------------------------------------------
@@ -641,12 +710,12 @@ def test_unset_settings_are_omitted(monkeypatch):
 
 
 def test_unrelated_variables_are_not_forwarded(monkeypatch):
-    # The container manager's own environment holds the Docker socket, the
-    # runner target and whatever else the host has; none of it belongs in a
-    # container that runs user programs.
+    # The container manager's own environment holds DOCKER_HOST and whatever
+    # else the host has; none of it belongs in a container that runs user
+    # programs.
     for key in dockerApi.RUNNER_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("RUNNER_TARGET", "dpasp")
+    monkeypatch.setenv("DOCKER_HOST", "tcp://docker-proxy:2375")
     monkeypatch.setenv("AUTH_SECRET", "hunter2")
 
     api = api_with(FakeClient(FakeContainers()))

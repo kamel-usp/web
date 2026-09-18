@@ -19,9 +19,10 @@ async def lifespan(app: FastAPI):
     cm = containerManager(2 * day)
 
     # Warmed up in the background, not here. Uvicorn binds its listening
-    # socket only after this startup block returns, so doing the runner image
-    # build inline made the API refuse connections for the whole build — the
-    # frontend got ECONNREFUSED rather than something it could display.
+    # socket only after this startup block returns, so anything slow inline
+    # makes the API refuse connections for the duration — which is how the
+    # frontend used to get ECONNREFUSED rather than something it could
+    # display, back when this also built the runner image.
     warmup = asyncio.create_task(cm.start())
 
     yield
@@ -33,10 +34,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-BUILDING_MESSAGE = (
-    "The dPASP runner image is still being built. The first build takes "
-    "several minutes: it compiles dPASP against clingo and downloads PyTorch. "
-    "Watch progress with: docker compose logs -f container-manager"
+STARTING_MESSAGE = (
+    "The container manager is still warming up: it is checking the runner "
+    "image, clearing any leftover containers and pre-allocating the first "
+    "runners. This takes seconds. If it does not finish, the reason is in: "
+    "docker compose logs -f container-manager"
 )
 
 
@@ -48,7 +50,7 @@ async def health():
     if cm.startup_error is not None:
         return {"status": "error", "detail": cm.startup_error}
     if not cm.ready:
-        return {"status": "building", "detail": BUILDING_MESSAGE}
+        return {"status": "starting", "detail": STARTING_MESSAGE}
     return {
         "status": "ready",
         "active_containers": cm.activeContainerCount(),
@@ -60,12 +62,12 @@ async def health():
 async def get_container_for_user(user_id: str):
     """Hand back the runner container assigned to a user, creating one if needed.
 
-    Answers 503 with a reason while the image is still building, so the
+    Answers 503 with a reason while the manager is still warming up, so the
     editor can tell the user what is happening instead of reporting a bare
     connection failure.
     """
     if cm is None or not cm.ready:
-        detail = cm.startup_error if cm is not None and cm.startup_error else BUILDING_MESSAGE
+        detail = cm.startup_error if cm is not None and cm.startup_error else STARTING_MESSAGE
         return JSONResponse({"error": detail}, status_code=503)
 
     print(f"Requesting container for user_id: {user_id}", flush=True)

@@ -22,10 +22,103 @@ x-runner-config: &runner-config
   DPASP_RUNNER_ALLOW_NETWORK: ${DPASP_RUNNER_ALLOW_NETWORK:-0}
 
 services:
+  # The only container that touches the Docker socket.
+  #
+  # The manager has to create containers, and until this service existed that
+  # meant mounting `/var/run/docker.sock` into it. That socket is root on the
+  # host: anything that can reach it can start a container with `Binds: ["/:
+  # /host"]` and `Privileged: true` and own the machine. With the runners
+  # themselves now tightly bounded, the manager was the softest thing in the
+  # stack — the one component whose compromise gave away everything.
+  #
+  # So the socket lives here, and the manager talks to this over TCP on an
+  # internal network the frontend is not on. `backend/dockerProxy/policy.py`
+  # is the whole policy: an allowlist of the calls the manager makes, with the
+  # dangerous fields of a create request *overwritten* rather than checked.
+  docker-proxy: &proxy
+    build:
+      context: backend/dockerProxy
+      dockerfile: Dockerfile
+    profiles:
+      - dpasp
+      - dpasp-prod
+    restart: ${DPASP_RESTART:-no}
+    networks:
+      - dockerproxy
+    # No `ports:`. Publishing this would hand the host's Docker daemon to
+    # anything that can reach the machine — a worse hole than the one it
+    # closes.
+    volumes:
+      # Set DOCKER_SOCKET when the daemon's socket is somewhere else, as it is
+      # under colima. Put it in a `.env` file next to this file, or export it:
+      #   DOCKER_SOCKET=$(docker context inspect \
+      #     -f '{{.Endpoints.docker.Host}}' | sed 's|^unix://||')
+      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+    # Root, because the socket is root:docker 0660 and the gid differs per
+    # host — but root holding nothing else. The process needs no capabilities
+    # and writes nothing outside /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777,nosuid,nodev,noexec
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+
+  # The runner image, built by Compose rather than by the container manager.
+  #
+  # The manager used to build it itself, at startup, through the Docker API.
+  # That was the last thing `docker-proxy` had to allow — `POST /build` runs a
+  # Dockerfile, which means `RUN` steps as root in a build container — and the
+  # last way a compromised web tier could make the daemon *execute* something.
+  # Compose can do it, so Compose does, and `/build` came off the allowlist.
+  #
+  # This service exists to be *built*, so its container is a one-shot task:
+  # `entrypoint` replaces the image's uvicorn command with an echo, and the
+  # manager waits on `service_completed_successfully`. A runner container that
+  # actually served would be wrong here — it would be unmanaged, unbounded,
+  # and on the wrong network — so the container that does start says what it
+  # is and exits 0.
+  #
+  # The entrypoint is a *runtime* override; the image keeps its own `CMD`, and
+  # that is what the runners the manager creates will run.
+  #
+  # `restart` is pinned rather than following DPASP_RESTART, because a
+  # container that exits immediately under `unless-stopped` would restart for
+  # ever.
+  runner-image: &runner-image
+    image: dpasp-runner
+    build:
+      context: backend/dPaspRunner
+      dockerfile: Dockerfile
+      target: dpasp
+    profiles:
+      - dpasp
+      - dpasp-prod
+    entrypoint:
+      - /bin/echo
+      - "runner image built and tagged dpasp-runner. This container is not a
+        runner: it exits now, and the container manager creates the real ones."
+    restart: "no"
+
+  runner-image-mock:
+    <<: *runner-image
+    build:
+      context: backend/dPaspRunner
+      dockerfile: Dockerfile
+      target: mock
+    profiles:
+      - mock
+
   container-manager: &cm
     environment:
       <<: *runner-config
-      RUNNER_TARGET: dpasp
+      # The whole point of docker-proxy. `docker.from_env()` reads this, so
+      # the manager's own code did not change: it makes the same calls, and
+      # the ones it is not supposed to make now fail with 403 instead of
+      # succeeding.
+      DOCKER_HOST: tcp://docker-proxy:2375
     build:
       context: backend
       dockerfile: Dockerfile
@@ -37,22 +130,33 @@ services:
     # `no` in development; put DPASP_RESTART=unless-stopped in the `.env` on a
     # server so the stack comes back after a reboot.
     restart: ${DPASP_RESTART:-no}
+    # Long form, because the two conditions differ: the proxy has to be up,
+    # and the image build has to have *finished*. `service_completed_
+    # successfully` is what makes `runner-image` an ordering guarantee rather
+    # than a hope — the manager's `ensureImage` would otherwise be racing the
+    # build on a cold cache.
+    depends_on:
+      docker-proxy:
+        condition: service_started
+      runner-image:
+        condition: service_completed_successfully
     networks:
       - cm
+      - dockerproxy
     ports:
       - 8001:80
-    volumes:
-      # The container manager reaches the daemon through the Docker SDK for
-      # Python over this socket. It never shells out to the `docker` CLI, so
-      # neither the CLI binary nor libdevmapper needs mounting — and neither
-      # path exists on macOS, where Compose would silently bind an empty
-      # directory over them.
-      #
-      # Set DOCKER_SOCKET when the daemon's socket is somewhere else, as it is
-      # under colima. Put it in a `.env` file next to this file, or export it:
-      #   DOCKER_SOCKET=$(docker context inspect \
-      #     -f '{{.Endpoints.docker.Host}}' | sed 's|^unix://||')
-      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+    # No volumes. The socket mount that used to be here is what this whole
+    # change removed; if you find yourself adding it back, the proxy is
+    # refusing a call and the fix is to allow it in `policy.py` deliberately.
+
+  docker-proxy-mock:
+    <<: *proxy
+    profiles:
+      - mock
+    networks:
+      dockerproxy:
+        aliases:
+          - docker-proxy
 
   container-manager-mock:
     <<: *cm
@@ -60,11 +164,17 @@ services:
       - mock
     environment:
       <<: *runner-config
-      RUNNER_TARGET: mock
+      DOCKER_HOST: tcp://docker-proxy:2375
+    depends_on:
+      docker-proxy-mock:
+        condition: service_started
+      runner-image-mock:
+        condition: service_completed_successfully
     networks:
       cm:
         aliases:
           - container-manager
+      dockerproxy: {}
 
   # Development frontend: Vite's dev server, with the source bind-mounted for
   # hot reload. Not something to expose to a network — it serves the source
@@ -191,5 +301,16 @@ networks:
   # DPASP_RUNNER_ALLOW_NETWORK=1 rather than changing this: the manager then
   # attaches the default bridge to each runner as well.
   dpasp-instances:
+    driver: bridge
+    internal: true
+
+  # The container manager and the Docker socket proxy, and nothing else. The
+  # frontend is deliberately not here: it faces the browser, and a request it
+  # could be tricked into making must not be able to reach the proxy at all —
+  # the proxy's allowlist is the second line of defence, not the first.
+  #
+  # `internal: true` because neither end needs a route off the host. The
+  # manager keeps its own route through `cm`.
+  dockerproxy:
     driver: bridge
     internal: true

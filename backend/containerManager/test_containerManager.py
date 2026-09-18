@@ -18,14 +18,14 @@ class MockDocker:
     def __init__(self):
         self.created = 0
         self.deleted = []
-        self.builds = 0
+        self.image_checks = 0
         self.sweeps = 0
         #: Containers this fake considers dead, by id.
         self.dead = set()
         self.liveness_checks = []
 
-    def build_image(self):
-        self.builds += 1
+    def ensureImage(self):
+        self.image_checks += 1
 
     def removeStaleContainers(self):
         self.sweeps += 1
@@ -123,20 +123,20 @@ def test_construction_touches_no_docker():
     """The constructor must do no Docker work.
 
     Uvicorn binds its socket only after the lifespan's startup returns, so
-    anything slow here makes the whole API refuse connections. The image
-    build belongs in `start`, awaited in the background.
+    anything slow here makes the whole API refuse connections. Every Docker
+    call belongs in `start`, awaited in the background.
     """
     docker = MockDocker()
     manager = containerManager(60, pre_allocate=2, docker_api=docker)
 
-    assert docker.builds == 0
+    assert docker.image_checks == 0
     assert docker.sweeps == 0
     assert docker.created == 0
     assert manager.ready is False
 
     async def scenario():
         await manager.start()
-        assert docker.builds == 1
+        assert docker.image_checks == 1
         assert docker.sweeps == 1
         assert manager.ready is True
 
@@ -147,7 +147,7 @@ def test_a_failed_startup_is_recorded_not_raised():
     """A detached task cannot usefully raise; the HTTP layer reports this."""
 
     class BrokenDocker(MockDocker):
-        def build_image(self):
+        def ensureImage(self):
             raise RuntimeError("no such image")
 
     async def scenario():

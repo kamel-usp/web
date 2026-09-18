@@ -2,10 +2,10 @@
 Tests for the container manager's HTTP surface.
 
 The point of these is the startup behaviour: the API must answer while the
-runner image is still being built. Uvicorn binds its listening socket only
-after the lifespan's startup block returns, so any Docker work done inline
-there makes the whole service refuse connections — which is what the frontend
-used to see as `ECONNREFUSED`.
+manager is still warming up. Uvicorn binds its listening socket only after the
+lifespan's startup block returns, so any Docker work done inline there makes
+the whole service refuse connections — which is what the frontend used to see
+as `ECONNREFUSED`, back when the image build happened there too.
 
     cd backend && python3 -m pytest test_main.py
 """
@@ -20,11 +20,11 @@ import main
 
 
 class FakeManager:
-    """Stands in for `containerManager`, with a build we control."""
+    """Stands in for `containerManager`, with a warmup we control."""
 
-    def __init__(self, lifetime, pre_allocate=2, docker_api=None, build_seconds=0.0):
+    def __init__(self, lifetime, pre_allocate=2, docker_api=None, warmup_seconds=0.0):
         self.lifetime = lifetime
-        self.build_seconds = build_seconds
+        self.warmup_seconds = warmup_seconds
         self.ready = False
         self.startup_error = None
         self.pre_allocated_containers = []
@@ -32,7 +32,7 @@ class FakeManager:
         self.stopped = False
 
     async def start(self):
-        await asyncio.sleep(self.build_seconds)
+        await asyncio.sleep(self.warmup_seconds)
         self.ready = True
 
     async def getContainer(self, user_id):
@@ -62,7 +62,7 @@ def client(monkeypatch):
     made = {}
 
     def factory(lifetime, **kwargs):
-        made["manager"] = FakeManager(lifetime, build_seconds=0.3, **kwargs)
+        made["manager"] = FakeManager(lifetime, warmup_seconds=0.3, **kwargs)
         return made["manager"]
 
     monkeypatch.setattr(main, "containerManager", factory)
@@ -71,18 +71,18 @@ def client(monkeypatch):
         yield c
 
 
-def test_the_api_answers_while_the_image_is_building(client):
+def test_the_api_answers_while_the_manager_is_warming_up(client):
     # The decisive check: a response at all, rather than a refused connection.
     assert client.manager.ready is False
 
     response = client.get("/container_for_user/alice")
 
     assert response.status_code == 503
-    assert "still being built" in response.json()["error"]
+    assert "warming up" in response.json()["error"]
 
 
-def test_health_reports_building_then_ready(client):
-    assert client.get("/health").json()["status"] == "building"
+def test_health_reports_starting_then_ready(client):
+    assert client.get("/health").json()["status"] == "starting"
 
     wait_until_ready(client)
     assert client.manager.ready is True
@@ -150,7 +150,7 @@ def test_shutdown_stops_the_containers(monkeypatch):
     made = {}
 
     def factory(lifetime, **kwargs):
-        made["manager"] = FakeManager(lifetime, build_seconds=0.0, **kwargs)
+        made["manager"] = FakeManager(lifetime, warmup_seconds=0.0, **kwargs)
         return made["manager"]
 
     monkeypatch.setattr(main, "containerManager", factory)

@@ -1,0 +1,9 @@
+# The image copies `policy.py` and `proxy.py` and nothing else. Keeping the
+# rest out of the build context is not only about size: this is the container
+# that holds the Docker socket, and the less that is sent to the daemon to
+# build it, the less there is to reason about.
+conftest.py
+test_*.py
+__pycache__/
+*.pyc
+.pytest_cache/
