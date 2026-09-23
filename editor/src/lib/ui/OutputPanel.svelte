@@ -12,24 +12,32 @@
   import type { RunResult } from '$lib/types';
 
   type Tab = 'probabilities' | 'output' | 'error';
-  let active: Tab = 'probabilities';
+  let active = $state<Tab>('probabilities');
 
   /** Tracks which result the tab was auto-selected for, so a manual choice sticks. */
   let autoSelectedFor: RunResult | null = null;
 
-  $: if ($runResult && $runResult !== autoSelectedFor) {
-    autoSelectedFor = $runResult;
-    active = $runResult.error
-      ? 'error'
-      : $runResult.queries.length === 0 && $runResult.output
-        ? 'output'
-        : 'probabilities';
-  }
+  /**
+   * Choosing the tab is a side effect of a *new* result arriving, not a value
+   * derived from one — the user may click another tab afterwards and that
+   * choice has to survive. Hence `$effect` rather than `$derived`, with
+   * `autoSelectedFor` as the "have I already reacted to this one" latch.
+   */
+  $effect(() => {
+    if ($runResult && $runResult !== autoSelectedFor) {
+      autoSelectedFor = $runResult;
+      active = $runResult.error
+        ? 'error'
+        : $runResult.queries.length === 0 && $runResult.output
+          ? 'output'
+          : 'probabilities';
+    }
+  });
 
-  $: result = $runResult;
-  $: queryCount = result ? result.queries.length : 0;
-  $: hasOutput = !!(result && result.output);
-  $: hasError = !!(result && result.error);
+  const result = $derived($runResult);
+  const queryCount = $derived(result ? result.queries.length : 0);
+  const hasOutput = $derived(!!(result && result.output));
+  const hasError = $derived(!!(result && result.error));
 
   const ERROR_LABELS: Record<string, string> = {
     parse: 'Syntax error',
@@ -42,18 +50,18 @@
 <section id="output-panel">
   <header>
     <nav>
-      <button class:active={active === 'probabilities'} on:click={() => (active = 'probabilities')}>
+      <button class:active={active === 'probabilities'} onclick={() => (active = 'probabilities')}>
         Probabilities{#if queryCount}<span class="badge">{queryCount}</span>{/if}
       </button>
-      <button class:active={active === 'output'} on:click={() => (active = 'output')}>
-        Output{#if hasOutput}<span class="dot" />{/if}
+      <button class:active={active === 'output'} onclick={() => (active = 'output')}>
+        Output{#if hasOutput}<span class="dot"></span>{/if}
       </button>
       <button
         class:active={active === 'error'}
         class:has-error={hasError}
-        on:click={() => (active = 'error')}
+        onclick={() => (active = 'error')}
       >
-        Errors{#if hasError}<span class="dot error" />{/if}
+        Errors{#if hasError}<span class="dot error"></span>{/if}
       </button>
     </nav>
 
@@ -90,7 +98,7 @@
         <p class="empty">Press the play button to run the program.</p>
       {:else if result.error}
         <p class="empty">
-          The program did not run. See the <button class="link" on:click={() => (active = 'error')}
+          The program did not run. See the <button class="link" onclick={() => (active = 'error')}
             >Errors</button
           > tab.
         </p>
@@ -110,7 +118,7 @@
               {:else}
                 <th class="num">Probability</th>
               {/if}
-              <th class="bar-col" />
+              <th class="bar-col"></th>
             </tr>
           </thead>
           <tbody>
@@ -134,7 +142,7 @@
                         1,
                         (boundFraction(q.upper) - boundFraction(q.lower)) * 100
                       )}%"
-                    />
+                    ></div>
                   </div>
                 </td>
               </tr>

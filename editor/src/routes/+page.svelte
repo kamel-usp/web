@@ -10,63 +10,73 @@
   import { currentFile, currentFileContent, currentFileTruncation } from '$lib/stores/editor';
   import { formatBytes, formatCount } from '$lib/limits';
 
-  let fileBrowserComp: FileBrowser;
+  let fileBrowserComp = $state<ReturnType<typeof FileBrowser> | undefined>();
 </script>
 
 <div class="page-container">
   <Toolbar />
 
   <div class="workspace">
-    <SplitPane type="horizontal" min="120px" max="30%" pos="18%" id="shell">
-      <section slot="a" class="pane" id="browser">
-        <FileBrowser bind:this={fileBrowserComp} />
-      </section>
+    <!-- `columns`/`rows` rather than `horizontal`/`vertical`: SplitPane 3
+         renamed them, and the slots became snippets. -->
+    <SplitPane type="columns" min="120px" max="30%" pos="18%" id="shell">
+      {#snippet a()}
+        <section class="pane" id="browser">
+          <FileBrowser bind:this={fileBrowserComp} />
+        </section>
+      {/snippet}
 
-      <section slot="b" class="pane">
-        <SplitPane type="vertical" min="25%" max="85%" pos="62%" id="editor-output">
-          <section slot="a" class="pane" id="code">
-            {#if $currentFile != ''}
-              {#if $currentFileTruncation}
-                <!-- The buffer below is only the head of the file, so say so
-                     before the user reads it as the whole thing. -->
-                <p class="truncated" id="truncation-warning" role="status">
-                  <strong>
-                    Showing the first {formatCount($currentFileTruncation.shownLines)} of
-                    {formatCount($currentFileTruncation.totalLines)} lines.
-                  </strong>
-                  <code>{$currentFile}</code> is {formatBytes($currentFileTruncation.bytes)}, too long
-                  to edit here, so it is open read-only and cannot be run. The whole file is still on
-                  the server: a program that reads it — with <code>#learn</code> or from a
-                  <code>#python</code> block — sees every line.
+      {#snippet b()}
+        <section class="pane">
+          <SplitPane type="rows" min="25%" max="85%" pos="62%" id="editor-output">
+            {#snippet a()}
+              <section class="pane" id="code">
+              {#if $currentFile != ''}
+                {#if $currentFileTruncation}
+                  <!-- The buffer below is only the head of the file, so say so
+                       before the user reads it as the whole thing. -->
+                  <p class="truncated" id="truncation-warning" role="status">
+                    <strong>
+                      Showing the first {formatCount($currentFileTruncation.shownLines)} of
+                      {formatCount($currentFileTruncation.totalLines)} lines.
+                    </strong>
+                    <code>{$currentFile}</code> is {formatBytes($currentFileTruncation.bytes)}, too
+                    long to edit here, so it is open read-only and cannot be run. The whole file is
+                    still on the server: a program that reads it — with <code>#learn</code> or from
+                    a <code>#python</code> block — sees every line.
+                  </p>
+                {/if}
+                <!-- `onchange` is wrapped in an arrow function on purpose:
+                     `bind:this` is still undefined when handlers are attached,
+                     so passing `fileBrowserComp?.saveFile` directly attached
+                     nothing and the buffer was never auto-saved. -->
+                <CodeMirror
+                  bind:value={$currentFileContent}
+                  lang={pasp()}
+                  theme={oneDark}
+                  readonly={$currentFileTruncation !== null}
+                  onchange={() => fileBrowserComp?.saveFile()}
+                  styles={{
+                    '&': { height: '100%', fontSize: '13px' },
+                    '.cm-scroller': { overflow: 'auto' }
+                  }}
+                />
+              {:else}
+                <p class="no-file">
+                  Create or open a <code>.pasp</code> file to start writing a program.
                 </p>
               {/if}
-              <!-- `on:change` is wrapped in an arrow function on purpose:
-                   `bind:this` is still undefined when handlers are attached,
-                   so passing `fileBrowserComp?.saveFile` directly attached
-                   nothing and the buffer was never auto-saved. -->
-              <CodeMirror
-                bind:value={$currentFileContent}
-                lang={pasp()}
-                theme={oneDark}
-                readonly={$currentFileTruncation !== null}
-                on:change={() => fileBrowserComp?.saveFile()}
-                styles={{
-                  '&': { height: '100%', fontSize: '13px' },
-                  '.cm-scroller': { overflow: 'auto' }
-                }}
-              />
-            {:else}
-              <p class="no-file">
-                Create or open a <code>.pasp</code> file to start writing a program.
-              </p>
-            {/if}
-          </section>
+              </section>
+            {/snippet}
 
-          <section slot="b" class="pane">
-            <OutputPanel />
-          </section>
-        </SplitPane>
-      </section>
+            {#snippet b()}
+              <section class="pane">
+                <OutputPanel />
+              </section>
+            {/snippet}
+          </SplitPane>
+        </section>
+      {/snippet}
     </SplitPane>
   </div>
 </div>
@@ -76,8 +86,8 @@
     display: flex;
     flex-direction: column;
     height: 100vh;
-    /* Leaves room for the fixed navbar. */
-    padding-top: 48px;
+    /* Leaves room for the fixed title bar; see --nav-height in app.css. */
+    padding-top: var(--nav-height);
     box-sizing: border-box;
   }
 

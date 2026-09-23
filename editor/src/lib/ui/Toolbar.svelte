@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { Toolbar, ToolbarButton, Spinner } from 'flowbite-svelte';
-  import { PlayOutline, DownloadSolid } from 'flowbite-svelte-icons';
+  import Icon from '$lib/ui/icons/Icon.svelte';
+  import Spinner from '$lib/ui/icons/Spinner.svelte';
+  import { PLAY, DOWNLOAD } from '$lib/ui/icons/paths';
   import {
     currentFile,
     currentFileContent,
@@ -24,7 +25,7 @@
    */
 
   /** True while the whole file is being fetched for a download. */
-  let downloading = false;
+  let downloading = $state(false);
 
   async function download() {
     const plan = planDownload($currentFile, $currentFileTruncation !== null);
@@ -160,7 +161,7 @@
   }
 </script>
 
-<Toolbar>
+<div class="toolbar">
   <div class="flex-container">
     {#if $currentFile}
       <span class="filename" title="The open file">{$currentFile}</span>
@@ -172,49 +173,89 @@
     {/if}
   </div>
 
-  <!-- One element, not two: flowbite's Toolbar is `justify-between`, and each
-       child of the end slot becomes a flex child of it — two buttons would be
-       pushed apart, one landing in the middle of the bar. -->
-  <div class="actions" slot="end">
-    <ToolbarButton
+  <div class="actions">
+    <button
+      type="button"
       name="download"
-      color="default"
+      class="icon-button"
       disabled={!$currentFile || downloading}
-      class={!$currentFile || downloading ? 'opacity-40 cursor-not-allowed' : ''}
-      on:click={download}
+      onclick={download}
       title={$currentFileTruncation
         ? 'Download the whole file — more than the editor is showing'
         : 'Download this program'}
     >
       {#if downloading}
-        <Spinner class="w-5 h-5" size={6} />
+        <Spinner />
       {:else}
-        <DownloadSolid class="w-5 h-5" />
+        <Icon d={DOWNLOAD} solid />
       {/if}
-    </ToolbarButton>
+    </button>
 
-    <!-- flowbite gives a disabled ToolbarButton no styling of its own, so the
-         class below is what stops an unusable play button from looking ready. -->
-    <ToolbarButton
+    <button
+      type="button"
       name="run"
-      color="green"
+      class="icon-button run"
       disabled={$running || $currentFileTruncation !== null}
-      class={$currentFileTruncation ? 'opacity-40 cursor-not-allowed' : ''}
-      on:click={submit}
+      onclick={submit}
       title={$currentFileTruncation
         ? 'This file is too long to open whole, so only part of it is on screen. Running that part would not be running the program.'
         : 'Run the program'}
     >
       {#if $running}
-        <Spinner class="w-5 h-5" size={6} />
+        <Spinner />
       {:else}
-        <PlayOutline class="w-5 h-5" />
+        <Icon d={PLAY} />
       {/if}
-    </ToolbarButton>
+    </button>
   </div>
-</Toolbar>
+</div>
 
 <style>
+  /* The bar itself. flowbite's `Toolbar` was `justify-between`, which is why
+     the two buttons used to need wrapping in one element to keep them
+     together; that is just this rule now. */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    background-color: #1f2937;
+  }
+
+  .icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: #d1d5db;
+    cursor: pointer;
+  }
+
+  .icon-button:hover:not(:disabled) {
+    background-color: #374151;
+    color: #ffffff;
+  }
+
+  .icon-button:focus-visible {
+    outline: 2px solid var(--color-primary-500);
+    outline-offset: 1px;
+  }
+
+  .icon-button.run {
+    color: #34d399;
+  }
+
+  /* A disabled button has to look disabled. flowbite's did not, which is why
+     the old markup passed `opacity-40 cursor-not-allowed` at each call. */
+  .icon-button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
   .actions {
     display: flex;
     align-items: center;

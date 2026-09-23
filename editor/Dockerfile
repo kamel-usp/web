@@ -1,4 +1,13 @@
-FROM node:20-alpine AS base
+# Node 24, not 20. The framework upgrade moved the floor: undici 8 declares
+# `node >= 22.19.0` and vitest 5 `^22.12 || ^24 || >=26`, so a Node 20 image
+# now fails at `npm ci` rather than at run time. 24 is the current LTS and
+# satisfies every engine range in the tree.
+#
+# Alpine is still fine after the move to Vite 8 and Tailwind 4, both of which
+# ship native binaries: `@rolldown/binding-linux-{x64,arm64}-musl` and
+# `@tailwindcss/oxide-linux-{x64,arm64}-musl` are both published, so the image
+# builds on an Apple Silicon laptop and on an x86_64 server alike.
+FROM node:24-alpine AS base
 
 WORKDIR /app
 

@@ -13,8 +13,8 @@
  */
 
 import { SvelteKitAuth } from '@auth/sveltekit';
-import GitHub from '@auth/core/providers/github';
-import Google from '@auth/core/providers/google';
+import GitHub from '@auth/sveltekit/providers/github';
+import Google from '@auth/sveltekit/providers/google';
 import { env } from '$env/dynamic/private';
 import { sequence } from '@sveltejs/kit/hooks';
 import type { Handle } from '@sveltejs/kit';
@@ -32,7 +32,7 @@ if (env.GOOGLE_ID && env.GOOGLE_SECRET) {
 
 /** Used when no provider is configured: no session, no sign-in routes. */
 const anonymous: Handle = async ({ event, resolve }) => {
-  event.locals.getSession = async () => null;
+  event.locals.auth = async () => null;
   return resolve(event);
 };
 
@@ -43,8 +43,14 @@ if (providers.length > 0 && !env.AUTH_SECRET) {
   );
 }
 
+/**
+ * `SvelteKitAuth` returns an object now — `{ handle, signIn, signOut }` —
+ * where it used to *be* the handle. Only the handle is used here: sign-in and
+ * sign-out are ordinary links to `/auth/signin` and `/auth/signout`, not form
+ * actions.
+ */
 const authenticate: Handle =
-  providers.length > 0 ? SvelteKitAuth({ providers, trustHost: true }) : anonymous;
+  providers.length > 0 ? SvelteKitAuth({ providers, trustHost: true }).handle : anonymous;
 
 /** Days a workspace cookie survives. */
 const USER_COOKIE_DAYS = 30;
@@ -58,7 +64,8 @@ const USER_COOKIE_DAYS = 30;
  */
 const identify: Handle = async ({ event, resolve }) => {
   const existing = event.cookies.get('user_id');
-  const session = await event.locals.getSession();
+  // `locals.auth()` in @auth/sveltekit 1.x; it was `locals.getSession()`.
+  const session = await event.locals.auth();
   const id = await deriveUserId(session?.user?.email, existing);
 
   if (id !== existing) {

@@ -37,6 +37,11 @@ The front end never talks to a runner container directly: the runner
 hostnames only exist on the internal `dpasp-instances` network, and the
 SvelteKit server route is what resolves which container belongs to the caller.
 
+The title bar links to the dPASP language tutorial at
+<https://kamel-usp.github.io/pages/learn_dpasp.html>, in a new tab — it is the
+one link that leaves the app, and the page holds unsaved buffers and possibly a
+run in flight.
+
 ## Running it
 
 ### With Docker
@@ -285,6 +290,37 @@ successfully`, so the image is guaranteed to exist before it looks for it.
 A runner container that actually served here would be the bug: unmanaged,
 unbounded, and on the wrong network. The override is runtime only; the image
 keeps its own `CMD`, which is what the real runners run.
+
+#### `InvalidArgumentError: invalid onRequestStart method`
+
+```
+frontend-1 | proxying blob/list failed: [TypeError: fetch failed] {
+frontend-1 |   [cause]: InvalidArgumentError: invalid onRequestStart method
+frontend-1 |       at assertRequestHandler (/app/node_modules/undici/lib/core/util.js:573:11)
+frontend-1 |     code: 'UND_ERR_INVALID_ARG'
+```
+
+**Two copies of undici, disagreeing.** Node's global `fetch` *is* undici — a
+copy bundled inside Node — and `runnerFetch` was handing it a `dispatcher`
+built from the `undici` package in `node_modules`. Node's fetch constructs a
+request handler shaped for its bundled version and passes it to that
+dispatcher, which validates it and refuses. The two shapes agreed for long
+enough to look like one library, and stopped agreeing at undici 8.
+
+Nothing about it is visible to the type checker: both `fetch`es have the same
+signature, and the failure is at the first request, not at build time.
+
+The fix is to stop mixing them — take the `fetch` from the same package as the
+`Agent`:
+
+```ts
+import { Agent, fetch as undiciFetch } from 'undici';
+```
+
+so nothing depends on which undici the Node image happens to bundle.
+`src/lib/runnerFetch.test.ts` pins it by calling a real `http.createServer`;
+reverting the import makes three of its tests fail with exactly the error
+above.
 
 #### `getaddrinfo ENOTFOUND dpasp-instance-<id>`
 
@@ -952,6 +988,41 @@ truncated copy of their own data file is worse than making them wait a
 moment. `planDownload` in `editor/src/lib/download.ts` is that decision, and
 it has tests.
 
+## The file list
+
+Two buttons: **New file** and **Upload a data file**. There used to be a third,
+*List files*, which fetched the file names and printed them into the output
+panel's notice line — the same names the panel beside it was already showing.
+
+Entries are drawn with the glyph their extension earns:
+
+| extension | glyph | |
+| --- | --- | --- |
+| `.pasp`, `.plp`, `.lp`, `.pl` | a solid document | a dPASP program: open it, run it |
+| `.csv`, `.tsv` | an outlined table | a data file: referenced by name from `#learn` or a `#python` block, not run |
+| anything else | a solid document | no guess |
+
+`fileGlyph` in `src/lib/ui/icons/paths.ts` is that mapping, and it is a pure
+function with its own tests — including that the two glyphs stay *distinct*,
+since returning the same path for both would satisfy every other assertion.
+The extension is matched case-insensitively (`DATA.CSV` comes off a user's
+machine looking like that) and only at the end of the name, so `csv-notes.pasp`
+is a program.
+
+Each icon carries its kind as an accessible label, so a screen reader reads
+"dPASP program earthquake.pasp" rather than the filename alone.
+
+Names are white; the **open** file is named in the accent
+(`--color-primary-500`, the same pink as "dPASP Playground" in the title bar),
+and its icon follows, since `Icon.svelte` draws in `currentColor`. One pink
+thing on screen, and it is always "where you are".
+
+The selected row is *recessed* rather than lightened, which is the part worth
+knowing: selection used to be a lighter `#3a3a3a`, and the accent on that
+measures 4.39:1 — under the 4.5:1 AA floor for 13 px text. Darkening the row
+to `#262626` takes the same colour to 5.84:1, so the file you are editing is
+the most readable line in the list rather than the least.
+
 ## Files, and the editor's line limit
 
 Uploaded files land in the runner's blob folder, which is the working
@@ -1010,7 +1081,7 @@ as comments would hide the resulting syntax error instead of revealing it.
 
 ## Example programs
 
-The "New file" dialog offers a **Start from** dropdown seeded with six
+The "New file" dialog offers a **Start from** dropdown seeded with eight
 programs, so a newcomer can run something real without typing it first:
 
 | File | Shows |
@@ -1019,7 +1090,9 @@ programs, so a newcomer can run something real without typing it first:
 | `insomnia.pasp` | the smallest program with non-degenerate credal bounds |
 | `coloring.pasp` | L-stable semantics and `undef` queries |
 | `prisoners.pasp` | interval-valued (credal) facts |
+| `argumentation.pasp` | probabilistic rules that attack and support each other, with the two halves of the semantics declared one directive each |
 | `learning.pasp` | learnable facts (`?::`) fitted to a CSV with `#learn` |
+| `poisson.pasp` | a **PyTorch** module supplying probabilities: a `#python` block and a neural annotated disjunction, `!::event(X) as @Poisson` |
 | `digitsum.pasp` | `#python` blocks, neural rules and `#learn` |
 
 The sources live in `editor/src/lib/examples/` as ordinary `.pasp` files and
@@ -1033,9 +1106,11 @@ comes from the [parameter-learning
 tutorial](https://kamel-usp.github.io/pages/learn_dpasp.html#learning-the-parameters-of-programs)
 and carries added comments.
 
-The first four run in about a second and reproduce their published figures.
-The other two are called out in the dialog when selected, rather than being
-left to look broken:
+All but two run in about a second and reproduce their published figures —
+checked here against real dPASP: `argumentation.pasp` in 1.8 s, and
+`poisson.pasp` giving ℙ(disaster) = 0.1472 and ℙ(joint) = 0.0010, which are
+the numbers its own comments predict. The other two are called out in the
+dialog when selected, rather than being left to look broken:
 
 * `learning.pasp` takes roughly 15 seconds and reads its CSV from a URL.
   dPASP resolves that URL **while the program is parsed** (`path2obs` in
@@ -1050,15 +1125,40 @@ left to look broken:
 * `digitsum.pasp` downloads MNIST and trains a network, so the first run may
   exceed even the 5-minute limit while it fetches MNIST.
 
+**Every example source must end with a newline**, and a test enforces it.
+That is not tidiness: dPASP's parser needs the newline to close a `%`
+comment, so a file whose last line is
+
+```prolog
+#query joint. % P(joint) = 0.001
+```
+
+with nothing after it fails to parse outright —
+`UnexpectedCharacters: No terminal matches '%' ... at line 28 col 15`. Found
+when `poisson.pasp` arrived without one. The run path happens to hide it
+(`submit` sends `content + '\n'`), but the stored source is also what a
+download hands the user, so it has to be right on its own.
+
+One other thing to know if you add an example with a `#python` block:
+**indent its bodies by a multiple of the enclosing indent.** CodeMirror's
+legacy Python mode tracks scopes by indentation, and a three-space body under
+a `def` makes it read `return` as being outside the function and style it as
+an error. The stock mode does this on its own — our `.pasp` mode delegates
+faithfully and reproduces it exactly — so the fix is the example's whitespace,
+not the highlighter. `poisson.pasp` had one such body and was renormalised to
+four spaces; the program is unchanged.
+
 Creating a file whose name already exists is refused, with the collision
 named. It used to overwrite silently.
 
 ## Tests
 
 ```bash
-cd web/editor && npm test              # 66 tests: tokenizer, examples, limits,
-                                       #     runner URL, download
-cd web/editor && npm run check         # svelte-check: 0 errors
+cd web/editor && npm test              # 94 tests: tokenizer, examples, limits,
+                                       #     runner URL, download, runnerFetch,
+                                       #     file icons
+cd web/editor && npm run check         # svelte-check: 0 errors, 0 warnings
+cd web/editor && npm audit             # 0 vulnerabilities
 
 # backend tests need the test-only extras:
 #   cd web/backend && pip install -r requirements-dev.txt
@@ -1084,30 +1184,60 @@ What it was, and what was done:
 | npm deprecation notices for `uuid@9` | `google-auth-library`, which was declared but never imported — the Google provider comes from `@auth/core` | dependency removed |
 | "New major version of npm available", funding and audit footers | npm's own notices, printed on each install | `NPM_CONFIG_UPDATE_NOTIFIER` / `_FUND` / `_AUDIT` in `editor/Dockerfile` |
 | The whole install log, on **every** `docker compose up` | the dev image ran `npm install` at container start, because the source bind mount hid the image's `node_modules` | `npm ci` in a cached build layer plus the `editor_node_modules` volume |
-| "Some chunks are larger than 500 kB" | CodeMirror and flowbite bundled into the 527 kB page chunk | `manualChunks` in `vite.config.ts` splits them out; the page chunk is now 48 kB |
+| "Some chunks are larger than 500 kB" | CodeMirror and flowbite bundled into the 527 kB page chunk | `manualChunks` in `vite.config.ts` splits them out; the page node is now 43 kB beside a 400 kB shared chunk |
 | "apt does not have a stable CLI interface" | `apt` used in `dPaspRunner/Dockerfile` | switched to `apt-get` |
 | debconf frontend warnings | interactive apt in a non-interactive build | `DEBIAN_FRONTEND=noninteractive` |
 | pip's root-user warning and version check | normal in a container, not actionable from inside the image | `PIP_ROOT_USER_ACTION` / `PIP_DISABLE_PIP_VERSION_CHECK` |
 | `FromAsCasing` and `LegacyKeyValueFormat` from BuildKit | `FROM ... as` and `ENV key value` in `editor/Dockerfile` | `AS` and `ENV key=value`; the unused `cm_host` variable was dropped |
 | A theme object printed to the server log on every render | a leftover `console.log` in `svelte-themes`, whose `<SvelteTheme />` did nothing — `app.html` hardcodes `class="dark"` and there is no theme toggle | dependency and component removed |
-| "Could not detect a supported production environment", on every build | `@sveltejs/adapter-auto` recognises a handful of hosting platforms and none of them is a university server | `@sveltejs/adapter-node` (pinned to 1.x, the SvelteKit 1 line), which also produces something runnable: `build/`, started with `node build` |
+| "Could not detect a supported production environment", on every build | `@sveltejs/adapter-auto` recognises a handful of hosting platforms and none of them is a university server | `@sveltejs/adapter-node`, which also produces something runnable: `build/`, started with `node build` |
 | `Cannot find base config file "./.svelte-kit/tsconfig.json"`, on a fresh checkout only | `tsconfig.json` extends a file that `svelte-kit sync` generates, and nothing ran sync first | every script that reads `tsconfig.json` now begins with `svelte-kit sync`, plus a `prepare` script — see the troubleshooting entry |
 | `inflight@1.0.6` "leaks memory", plus `rimraf@2` and `glob@7` | one chain under `svelte-check` 3: `svelte-check → svelte-preprocess → sorcery → sander → rimraf@2 → glob@7 → inflight` | `svelte-check` upgraded to 4.x, which dropped `svelte-preprocess` from its dependencies and takes the whole chain with it (24 packages) |
+| `npm warn Unknown project config "resolution-mode"` | `resolution-mode=highest` in `editor/.npmrc`. It is a **pnpm** option; npm has never had one by that name, so it did nothing but warn | line removed. npm already resolves to the highest version satisfying each range, which is what it was asking for |
 
-`npm install` is now warning-free from a clean cache — no deprecation notices
-at all. `--force` is gone too: the dependency set resolves on its own, so the
-flag (and its "I sure hope you know what you are doing" warning) was stale.
+`npm ci` is now completely silent — no deprecation notices, no config
+warnings. `--force` is gone too: the dependency set resolves on its own, so
+the flag (and its "I sure hope you know what you are doing" warning) was
+stale.
 
-Two notes on the `svelte-check` 4 upgrade:
+What `editor/.npmrc` *does* still carry is `engine-strict=true`, and that one
+earns its place. The framework upgrade moved the Node floor — `undici` 8
+declares `node >= 22.19.0`, vitest 5 `^22.12 || ^24 || >=26` — and without
+this npm prints `EBADENGINE` as a warning and installs anyway, so the first
+symptom of a too-old Node would be a runner request failing at run time.
+With it, `npm ci` fails immediately and says which package and which version.
+(Checked by temporarily declaring `engines.node: ">=99"`: `npm error code
+EBADENGINE`.)
 
-- It works on Svelte 4; its peer range is `^4.0.0 || ^5.0.0-next.0`, so this
-  did **not** require the Svelte 5 migration.
-- TypeScript is pinned to `~5.4.5`. SvelteKit 1.30.4 — the latest 1.x —
-  generates a `.svelte-kit/tsconfig.json` containing `importsNotUsedAsValues`
-  and `preserveValueImports`, which TypeScript 5.5 removed; on TS 5.9,
-  `svelte-check` reports two warnings about them that cannot be cleared from
-  our own `tsconfig.json`, since the options come from the generated parent.
-  Unpin TypeScript when moving to SvelteKit 2.
+### One build warning that stays
+
+```
+node_modules/@auth/core/lib/utils/cookie.js (1:30): The 'this' keyword is
+equivalent to 'undefined' at the top level of an ES module, and has been
+rewritten
+```
+
+Harmless, and it cannot be configured away from here. Two things to know.
+
+**It is benign.** The line it points at is TypeScript's emitted helper
+preamble:
+
+```js
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (…) { … };
+```
+
+The `this &&` guard is there precisely to cover the case where `this` is not
+an object: rewritten to `undefined`, the left side is falsy and the `||`
+branch — the real helper — is used. That is the intended path, not a
+degraded one.
+
+**It is not ours to silence.** It appears *after* `> Using
+@sveltejs/adapter-node` in the build log, because the adapter runs its own
+bundling pass over the server code, and that pass takes no configuration from
+`vite.config.ts`. Neither `rollupOptions.onwarn` nor `onLog` sees it — both
+were tried; `onLog` does receive Vite's own warnings, and this one is not
+among them — and Rolldown's `checks` has no `thisIsUndefined` switch. It goes
+away when `@auth/core` ships that file without the helper, and not before.
 
 Resist silencing a deprecated transitive dependency with an npm `override`
 unless the replacement is API-compatible. The tempting fix here —
@@ -1124,15 +1254,141 @@ troubleshooting entry above). The dev image now keeps its installed tree at
 the lockfile's hash differs from the one stamped there. `up --build` is
 enough.
 
+## The framework upgrade
+
+The whole front end moved a generation: **Svelte 4 → 5, SvelteKit 1 → 2,
+Vite 4 → 8, vitest 1 → 5, Tailwind 3 → 4, `@auth/sveltekit` 0.3 → 1.x,
+`undici` 5 → 8, `adapter-node` 1 → 5.** `npm audit` went from 17 advisories
+(3 critical, 4 high) to **0**.
+
+It was one change because it could not be several. The advisories were not
+stray packages: `@auth/core` needed `@auth/sveltekit` 1.x, which needed
+SvelteKit 2; SvelteKit 2 needed Vite 5+; vitest 1 pinned Vite 4; and
+`flowbite-svelte@0.44` pinned **Svelte 4**, so it blocked the one upgrade
+everything else was waiting on.
+
+### flowbite is gone
+
+`flowbite-svelte` 1.x requires Tailwind 4 and changed its component API, so
+the nav bar and the file browser's dialogs were being rewritten either way.
+The library was supplying eight components — `Navbar`/`NavBrand`/`NavUl`/
+`NavLi`/`NavHamburger`, `Toolbar`/`ToolbarButton`/`Spinner`, `Modal`,
+`Dropzone`, `Button`, `ButtonGroup` — and five icons, all of them thin
+wrappers over Tailwind classes. `src/lib/ui/` holds local equivalents now:
+
+| was | is | note |
+| --- | --- | --- |
+| `Navbar` + hamburger | plain `<nav>` in `+layout.svelte` | one link; the responsive menu had nothing to collapse |
+| `Toolbar` + `ToolbarButton` | `<div class="toolbar">` + `<button>` | a disabled button now *looks* disabled, which is what the old `opacity-40 cursor-not-allowed` at each call site was working around |
+| `Modal` | `src/lib/ui/Modal.svelte` | native `<dialog>` + `showModal()`: the browser supplies the backdrop, top layer, focus trap and Escape-to-close |
+| `Dropzone` | `src/lib/ui/Dropzone.svelte` | `<label>` around a visually hidden file input, so it stays focusable |
+| `Button`, `ButtonGroup` | `src/lib/ui/Button.svelte`, one `.group` rule | two variants, which is all that was used |
+| `flowbite-svelte-icons` | `src/lib/ui/icons/` | a handful of path strings on a 24×24 grid, one `Icon.svelte` |
+
+That is ~250 lines of local code against two dependencies, two audit chains,
+and the two bugs this project already hit through them (`Toolbar` being
+`justify-between`, and `ToolbarButtonType` having no `'primary'`). The unused
+`HoverMenu` went too — nothing imported it.
+
+### Tailwind 4
+
+`tailwind.config.cjs` and `postcss.config.cjs` are gone. The config is CSS
+now: `src/app.css` has `@import "tailwindcss"`, a `@theme` block for the
+`primary` scale, and `@custom-variant dark` in place of `darkMode: 'class'`.
+Tailwind is a Vite plugin (`@tailwindcss/vite`) rather than a PostCSS one, so
+`autoprefixer`, `postcss` and `postcss-load-config` left with it.
+
+Four global overrides in the old `app.postcss` went as well — `.mt-4`,
+`.rounded-lg`, `.container` and `menu`. Every one of them existed to fight a
+flowbite component, and redefining a *utility class* globally is a trap:
+`.mt-4 { margin-top: 0 }` silently breaks that utility everywhere.
+
+**Preflight got broader, and it broke `<dialog>`.** Tailwind 4 applies
+
+```css
+*, ::before, ::after, ::backdrop, ::file-selector-button { margin: 0; … }
+```
+
+where Tailwind 3 reset margins on a *named list* of elements. A modal
+`<dialog>` is centred by the browser's own stylesheet with `inset: 0` plus
+`margin: auto` — so the new `*` selector quietly removed the `auto` and pinned
+both dialogs to the top-left corner. `Modal.svelte` restates `margin: auto`,
+and the comment there says why it must stay: it looks redundant against the UA
+stylesheet precisely because something else is overriding that. Worth
+remembering for anything else that leans on a UA default — `<dialog>`, the
+`::backdrop`, list markers, `<fieldset>`.
+
+### What to know about the Svelte 5 part
+
+- `export let` → `$props()`, `$:` → `$derived`, slots → snippets,
+  `on:click` → `onclick`. `svelte-check` reports **0 errors and 0 warnings**,
+  which was the bar: Svelte 5 accepts the old syntax but deprecates it, so
+  "it still compiles" would have left the warnings behind.
+- **`$derived` for values, `$effect` for consequences.** The output panel
+  auto-selects a tab when a result arrives, but a tab the user then clicks
+  has to stick — so it is an `$effect` with a latch, not a derivation.
+- `SplitPane` renamed `horizontal`/`vertical` to `columns`/`rows` and turned
+  its slots into snippets.
+- `@auth/sveltekit` 1.x: `SvelteKitAuth(...)` returns `{ handle, signIn,
+  signOut }` where it used to *be* the handle, and `locals.getSession()`
+  became `locals.auth()`.
+- The dev and production images moved to **Node 24**: `undici` 8 declares
+  `node >= 22.19` and vitest 5 `^22.12 || ^24 || >=26`, so Node 20 now fails
+  at `npm ci`. Alpine still works — Rolldown (Vite 8) and Tailwind's oxide
+  both publish `linux-{x64,arm64}-musl` binaries.
+
+### The one override
+
+```json
+"overrides": { "cookie": "^0.7.2" }
+```
+
+`@sveltejs/kit@2.70.3` — the current release — depends on `cookie@^0.6.0`,
+and `cookie < 0.7.0` carries GHSA-pxg6-pf52-xh8x. That is the entire
+difference between "0 vulnerabilities" and four low-severity ones, and it is
+upstream's to fix: `npm audit fix --force` proposes `@sveltejs/kit@0.0.30`,
+which is not a fix.
+
+This project's own advice is to resist overrides unless the replacement is
+API-compatible (see *Build warnings*), so this one was checked rather than
+assumed: the session cookie is set on a cold visit and **read back
+unchanged** on the next request, which exercises both `serialize` and
+`parse`. Remove it when SvelteKit moves its own pin.
+
+### What was verified
+
+`npm test` (71), `npm run check` (0/0), `npm audit` (0), `vite build`, and the
+built server under `node build`.
+
+End to end, against a stub runner on localhost — `DPASP_RUNNER_URL` points the
+frontend at a single runner, which is the same hook the no-Docker setup uses:
+`POST /api/instance/blob/list` and `POST /api/instance/run` both return the
+runner's JSON through the real production bundle, and in Chromium the file
+list populates, a file opens, the run button works and the probability table
+renders with its semantics pills.
+
+In a browser besides: the New file dialog opens, lists the seven examples,
+suggests a filename and closes on Escape; the Upload drop zone renders with
+its button correctly disabled; `BODY_SIZE_LIMIT` still answers 413 above the
+limit; the anonymous `user_id` cookie is stable across requests; and with
+OAuth credentials present `/auth/signin` returns 200 and offers GitHub.
+
+**Not** verified: the Docker images, which cannot be built in the environment
+these changes were written in.
+
+**This list is longer than it was**, because the first pass did not include
+the proxy path at all. The page was rendered with no container manager
+running, so every API call 503'd before reaching `runnerFetch` — the panel
+showed *"Could not reach the dPASP runner"*, which had a true explanation in
+that environment and hid a real one in production. A visible error state in a
+screenshot is not noise because you can explain it.
+
 ## Known gaps
 
-- **`npm audit` reports 17 vulnerabilities, 3 of them critical.** They are
-  not stray dependencies; they all trace to the pinned generation of the
-  framework — Svelte 4 / SvelteKit 1 / Vite 4, plus `@auth/core` 0.15 and the
-  `vitest` that pins to Vite 4. Every fix `npm audit` offers is a major
-  version bump, so clearing them means a Svelte 5 + SvelteKit 2 + Vite 5
-  migration rather than a dependency tweak. Deprecation warnings are already
-  clear; this is the remaining dependency debt.
+- **One `overrides` entry is load-bearing.** `npm audit` is clean, but only
+  because `cookie` is pinned forward past SvelteKit's own `^0.6.0` — see *The
+  framework upgrade*. Drop the override once SvelteKit ships a release that
+  depends on `cookie@^0.7`.
 - **`pruneContainers` is never called.** Nothing schedules it, so containers
   live until the process exits rather than expiring after their configured
   lifetime. They are at least removed rather than left stopped now, and

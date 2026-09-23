@@ -5,7 +5,13 @@
   "//": [
     "Every script that reads tsconfig.json runs `svelte-kit sync` first: it",
     "generates .svelte-kit/tsconfig.json, which tsconfig.json extends and",
-    "which is not in git. See 'Cannot find base config file' in ../README.md."
+    "which is not in git. See 'Cannot find base config file' in ../README.md.",
+    "",
+    "There is no UI component library here on purpose. The eight flowbite",
+    "components this used were thin wrappers over Tailwind classes, and they",
+    "cost two of this project's bugs and a whole dependency chain in",
+    "`npm audit`; `src/lib/ui/` now holds local equivalents. See 'The",
+    "framework upgrade' in ../README.md."
   ],
   "scripts": {
     "prepare": "svelte-kit sync",
@@ -18,35 +24,35 @@
     "test:watch": "svelte-kit sync && vitest"
   },
   "devDependencies": {
-    "@sveltejs/adapter-node": "^1.3.1",
-    "@sveltejs/kit": "^1.20.4",
-    "@types/node": "^26.5.1",
-    "autoprefixer": "^10.4.15",
-    "flowbite-svelte": "^0.44.15",
-    "postcss": "^8.4.29",
-    "postcss-load-config": "^4.0.1",
-    "svelte": "^4.0.5",
+    "@sveltejs/adapter-node": "^5.5.7",
+    "@sveltejs/kit": "^2.70.3",
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.6.2",
+    "svelte": "^5.57.0",
     "svelte-check": "^4.7.6",
-    "tailwindcss": "^3.3.3",
-    "tslib": "^2.4.1",
-    "typescript": "~5.4.5",
-    "vite": "^4.4.2",
-    "vitest": "^1.6.1"
+    "tailwindcss": "^4.3.3",
+    "tslib": "^2.8.1",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
   },
   "type": "module",
   "dependencies": {
-    "@auth/core": "^0.15.0",
-    "@auth/sveltekit": "^0.3.7",
-    "@codemirror/autocomplete": "^6.11.1",
-    "@codemirror/language": "^6.9.3",
-    "@codemirror/legacy-modes": "^6.3.3",
-    "@codemirror/state": "^6.3.2",
-    "@codemirror/theme-one-dark": "^6.1.2",
-    "@codemirror/view": "^6.22.1",
-    "@lezer/highlight": "^1.2.0",
-    "@rich_harris/svelte-split-pane": "^1.1.1",
-    "flowbite-svelte-icons": "^0.4.4",
-    "svelte-codemirror-editor": "^1.1.0",
-    "undici": "^5.29.0"
+    "@auth/sveltekit": "^1.11.3",
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/legacy-modes": "^6.5.4",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/theme-one-dark": "^6.1.3",
+    "@codemirror/view": "^6.43.13",
+    "@lezer/highlight": "^1.2.3",
+    "@rich_harris/svelte-split-pane": "^3.0.0",
+    "codemirror": "^6.0.2",
+    "svelte-codemirror-editor": "^2.1.0",
+    "undici": "^8.10.2"
+  },
+  "overrides": {
+    "cookie": "^0.7.2"
   }
 }

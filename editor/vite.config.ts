@@ -1,4 +1,5 @@
 import { sveltekit } from '@sveltejs/kit/vite';
+import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
 /**
@@ -38,7 +39,11 @@ function allowedHosts(): string[] | true {
 }
 
 export default defineConfig({
-	plugins: [sveltekit()],
+	// Tailwind 4 is a Vite plugin rather than a PostCSS one. That is the whole
+	// of its build configuration: there is no `tailwind.config.cjs` and no
+	// `postcss.config.cjs` any more — the theme lives in `src/app.css`, in
+	// `@theme`, and the content scan is automatic.
+	plugins: [tailwindcss(), sveltekit()],
 
 	// `preview.allowedHosts` falls back to this, so both servers are covered.
 	server: {
@@ -49,18 +54,26 @@ export default defineConfig({
 		rollupOptions: {
 			output: {
 				/**
-				 * Split the two large vendor groups out of the page chunk.
+				 * Split CodeMirror out of the page chunk.
 				 *
 				 * Everything landed in one 527 kB chunk before this, which
-				 * tripped Rollup's 500 kB warning. CodeMirror and its Lezer
+				 * tripped the 500 kB warning. CodeMirror and its Lezer
 				 * grammars are the bulk of it, and they change far less often
 				 * than the app code, so giving them their own chunk both
 				 * silences the warning and lets a browser keep them cached
-				 * across deploys.
+				 * across deploys. (There used to be a `flowbite` chunk beside
+				 * this one; that dependency is gone.)
 				 *
 				 * Only `node_modules` ids are matched. The SSR build
 				 * externalises those rather than bundling them, so this
 				 * affects the client build alone.
+				 *
+				 * Still honoured under Vite 8, which bundles with Rolldown
+				 * rather than Rollup — but the returned name no longer shows
+				 * up in the filename, so the split is visible as a size
+				 * change rather than as `chunks/codemirror.js`. Measured:
+				 * with this, the page node is 43 kB beside a 400 kB shared
+				 * chunk; without it, one 443 kB node.
 				 */
 				manualChunks(id: string) {
 					if (!id.includes('node_modules')) return;
@@ -75,7 +88,6 @@ export default defineConfig({
 						return 'codemirror';
 					}
 
-					if (id.includes('flowbite')) return 'flowbite';
 				}
 			}
 		}

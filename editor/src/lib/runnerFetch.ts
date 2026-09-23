@@ -1,4 +1,4 @@
-import { Agent } from 'undici';
+import { Agent, fetch as undiciFetch } from 'undici';
 import { env } from '$env/dynamic/private';
 
 /**
@@ -25,9 +25,31 @@ const agent = new Agent({
   bodyTimeout: RUNNER_FETCH_TIMEOUT_MS
 });
 
-/** `fetch`, but willing to wait for a slow solver. */
+/**
+ * `fetch`, but willing to wait for a slow solver.
+ *
+ * **undici's `fetch`, not the global one.** Node's `fetch` is its own bundled
+ * copy of undici, and a `dispatcher` from the `undici` package on npm is a
+ * *different* copy. The two agreed for long enough to be mistaken for one
+ * library — and then stopped, when undici 8 changed the handler interface a
+ * dispatcher is called through. Node's fetch built a handler of its bundled
+ * version's shape, the userland `Agent` validated it, and every proxied
+ * request died before it left the process:
+ *
+ *     proxying blob/list failed: TypeError: fetch failed
+ *       [cause]: InvalidArgumentError: invalid onRequestStart method
+ *         at assertRequestHandler (undici/lib/core/util.js:573:11)
+ *         ...  code: 'UND_ERR_INVALID_ARG'
+ *
+ * Taking the `fetch` from the same package as the `Agent` removes the seam
+ * rather than lining the two copies up: nothing here now depends on which
+ * undici the Node image happens to bundle. `runnerFetch.test.ts` exercises
+ * this against a real HTTP server, because the mismatch is invisible to the
+ * type checker — both `fetch`es have the same signature.
+ */
 export function runnerFetch(url: string, init: RequestInit = {}): Promise<Response> {
-  // `dispatcher` is undici's, and is honoured by Node's global fetch; it is
-  // absent from the standard RequestInit type, hence the cast.
-  return fetch(url, { ...init, dispatcher: agent } as RequestInit);
+  // undici's own RequestInit accepts `dispatcher`; the DOM one this file is
+  // typed against does not, hence the casts. The returned Response is
+  // spec-compatible — `.ok`, `.status` and `.json()` are all that callers use.
+  return undiciFetch(url, { ...init, dispatcher: agent } as never) as unknown as Promise<Response>;
 }

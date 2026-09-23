@@ -4,7 +4,9 @@
    * lists files, opens one in the editor, creates a new one, and uploads
    * CSV data files or programs from the local machine.
    */
-  import { Modal, Dropzone, Button, ButtonGroup } from "flowbite-svelte";
+  import Modal from "$lib/ui/Modal.svelte";
+  import Dropzone from "$lib/ui/Dropzone.svelte";
+  import Button from "$lib/ui/Button.svelte";
   import {
     currentFile,
     currentFileContent,
@@ -12,7 +14,8 @@
     editorNotice,
     ref
   } from "$lib/stores/editor";
-  import { FileSolid, AdjustmentsVerticalOutline, UploadSolid } from 'flowbite-svelte-icons';
+  import Icon from "$lib/ui/icons/Icon.svelte";
+  import { FILE, UPLOAD, fileGlyph } from "$lib/ui/icons/paths";
   import { get } from "svelte/store";
   import { EXAMPLES, findExample } from "$lib/examples";
   import { MAX_EDITOR_LINES, countLines, formatCount } from "$lib/limits";
@@ -21,18 +24,18 @@
   const UNREACHABLE = "Could not reach the dPASP runner. It may still be starting up.";
 
   /** Files picked in the upload dialog but not yet sent. */
-  let pending: File[] = [];
-  let refresh = 0;
-  let showUploadModal = false;
-  let showAddFileModal = false;
-  let newFileName = "";
+  let pending: File[] = $state([]);
+  let refresh = $state(0);
+  let showUploadModal = $state(false);
+  let showAddFileModal = $state(false);
+  let newFileName = $state("");
 
   /** Chosen starting point in the New file dialog; "" is an empty file. */
-  let exampleId = "";
+  let exampleId = $state("");
   /** Names currently in the workspace, for the collision check below. */
-  let existingNames: string[] = [];
+  let existingNames: string[] = $state([]);
 
-  $: selectedExample = exampleId ? findExample(exampleId) : undefined;
+  const selectedExample = $derived(exampleId ? findExample(exampleId) : undefined);
 
   /**
    * Selecting an example fills in its filename, unless the user has already
@@ -49,9 +52,9 @@
     if (newFileName.trim() === "" || wasSuggested) newFileName = suggested;
   }
 
-  $: trimmedName = newFileName.trim();
-  $: nameCollides = trimmedName !== "" && existingNames.includes(trimmedName);
-  $: canCreate = trimmedName !== "" && !nameCollides;
+  const trimmedName = $derived(newFileName.trim());
+  const nameCollides = $derived(trimmedName !== "" && existingNames.includes(trimmedName));
+  const canCreate = $derived(trimmedName !== "" && !nameCollides);
 
   function addPending(files: File[]) {
     pending = [...pending, ...files];
@@ -128,21 +131,10 @@
     refresh = get(ref);
   }
 
-  async function listFiles() {
-    const response = await fetch("/api/instance/blob/list", {
-      method: "POST",
-      body: JSON.stringify({}),
-      headers: { "content-type": "application/json" },
-    });
-    const res = await response.json();
-    editorNotice.set(
-      res.files == undefined ? "Could not list files." : "Files: " + res.files.join(", ")
-    );
-  }
-
   interface FileEntry {
     name: string;
-    icon: typeof FileSolid;
+    /** Which glyph this file gets, chosen from its extension. */
+    glyph: ReturnType<typeof fileGlyph>;
   }
 
   async function fetchFiles(): Promise<FileEntry[]> {
@@ -165,7 +157,7 @@
     // upload had just written.
     if (get(editorNotice) === UNREACHABLE) editorNotice.set("");
     existingNames = res.files as string[];
-    return res.files.map((name: string) => ({ name, icon: FileSolid }));
+    return res.files.map((name: string) => ({ name, glyph: fileGlyph(name) }));
   }
 
   /**
@@ -211,8 +203,8 @@
 
   async function addNewFile() {
     const name = newFileName.trim();
-    // Guarded here as well as on the button: the dialog closes on click
-    // (`autoclose`), so a stale click must not overwrite an existing file.
+    // Guarded here as well as on the button: the dialog closes as this runs,
+    // so a stale click must not overwrite an existing file.
     if (name === "" || existingNames.includes(name)) return;
 
     const code = selectedExample?.code ?? "";
@@ -234,21 +226,21 @@
 </script>
 
 <div class="flex flex-col p-2 gap-2">
-  <ButtonGroup>
-    <Button title="New file" on:click={() => (showAddFileModal = true)}>
-      <FileSolid class="w-3 h-3 mr-2" />
+  <!-- Two actions. There used to be a third, "List files", which printed the
+       names into the output panel's notice line — the same names this panel
+       is already showing. -->
+  <div class="group" role="group" aria-label="Workspace actions">
+    <Button title="New file" onclick={() => (showAddFileModal = true)}>
+      <Icon d={FILE} solid size={16} />
     </Button>
-    <Button title="List files" on:click={listFiles}>
-      <AdjustmentsVerticalOutline class="w-3 h-3 mr-2" />
+    <Button title="Upload a data file" onclick={() => (showUploadModal = true)}>
+      <Icon d={UPLOAD} solid size={16} />
     </Button>
-    <Button title="Upload a data file" on:click={() => (showUploadModal = true)}>
-      <UploadSolid class="w-3 h-3 mr-2" />
-    </Button>
-  </ButtonGroup>
+  </div>
 
-  <!-- Rendered directly rather than through flowbite's Listgroup, whose slot
-       types the item as a string and so cannot carry an icon alongside the
-       name. -->
+  <!-- Rendered directly rather than through a list component: an entry needs
+       an icon beside its name, which flowbite's `Listgroup` could not carry
+       because its slot typed the item as a string. -->
   {#key refresh}
     {#await fetchFiles() then entries}
       {#if entries.length === 0}
@@ -261,9 +253,15 @@
                 type="button"
                 class="entry"
                 class:current={entry.name === $currentFile}
-                on:click={() => setCurrentFile(entry.name)}
+                onclick={() => setCurrentFile(entry.name)}
               >
-                <svelte:component this={entry.icon} class="w-3 h-3 mr-2.5" />
+                <Icon
+                  d={entry.glyph.d}
+                  solid={entry.glyph.solid}
+                  size={14}
+                  title={entry.glyph.label}
+                  class="entry-icon"
+                />
                 <span>{entry.name}</span>
               </button>
             </li>
@@ -273,38 +271,35 @@
     {/await}
   {/key}
 
-  <Modal title="Upload a file" bind:open={showUploadModal} autoclose outsideclose>
+  <Modal title="Upload a file" bind:open={showUploadModal}>
     <Dropzone
       id="dropzone"
       multiple
       accept=".csv,.tsv,.pasp,.plp,.lp,.pl,.txt,.json"
-      on:drop={dropHandle}
-      on:dragover={(event) => {
-        event.preventDefault();
-      }}
-      on:change={handleChange}>
-      <svg aria-hidden="true" class="mb-3 w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+      ondrop={dropHandle}
+      onchange={handleChange}
+    >
+      <Icon d={UPLOAD} solid size={36} class="dropzone-icon" />
       {#if pending.length === 0}
-        <p class="mb-2 text-sm text-gray-500 dark:text-gray-400"><span class="font-semibold">Click to upload</span> or drag and drop</p>
-        <p class="text-xs text-gray-500 dark:text-gray-400">
-          CSV data files and dPASP programs (.pasp, .plp, .lp)
-        </p>
+        <p class="dz-primary"><strong>Click to upload</strong> or drag and drop</p>
+        <p class="dz-secondary">CSV data files and dPASP programs (.pasp, .plp, .lp)</p>
       {:else}
-        <p>{showFiles(pending)}</p>
+        <p class="dz-primary">{showFiles(pending)}</p>
       {/if}
     </Dropzone>
-    <svelte:fragment slot="footer">
-      <Button color="alternative" disabled={pending.length === 0} on:click={submitUploadFile}>
+
+    {#snippet footer()}
+      <Button variant="alternative" disabled={pending.length === 0} onclick={submitUploadFile}>
         Upload {pending.length || ''}
       </Button>
-    </svelte:fragment>
+    {/snippet}
   </Modal>
 
-  <Modal title="New file" bind:open={showAddFileModal} autoclose outsideclose>
+  <Modal title="New file" bind:open={showAddFileModal}>
     <div class="new-file">
       <label class="field">
         <span class="field-label">Start from</span>
-        <select bind:value={exampleId} on:change={onExampleChange}>
+        <select bind:value={exampleId} onchange={onExampleChange}>
           <option value="">Empty file</option>
           {#each EXAMPLES as example (example.id)}
             <option value={example.id}>{example.label}</option>
@@ -342,13 +337,45 @@
       {/if}
     </div>
 
-    <svelte:fragment slot="footer">
-      <Button color="alternative" disabled={!canCreate} on:click={addNewFile}>Create</Button>
-    </svelte:fragment>
+    {#snippet footer()}
+      <Button variant="alternative" disabled={!canCreate} onclick={addNewFile}>Create</Button>
+    {/snippet}
   </Modal>
 </div>
 
 <style>
+  .group {
+    display: flex;
+  }
+
+  .group :global(button) {
+    border-radius: 0;
+  }
+
+  .group :global(button:first-child) {
+    border-radius: 6px 0 0 6px;
+  }
+
+  .group :global(button:last-child) {
+    border-radius: 0 6px 6px 0;
+  }
+
+  .group :global(button + button) {
+    border-left: 1px solid #52525b;
+  }
+
+  .dz-primary {
+    margin: 8px 0 2px;
+    font-size: 13px;
+    color: #a1a1aa;
+  }
+
+  .dz-secondary {
+    margin: 0;
+    font-size: 12px;
+    color: #8a8a8a;
+  }
+
   .new-file {
     display: flex;
     flex-direction: column;
@@ -424,6 +451,10 @@
     font-size: 12px;
   }
 
+  .entry :global(.entry-icon) {
+    margin-right: 10px;
+  }
+
   .entry {
     display: flex;
     align-items: center;
@@ -432,7 +463,7 @@
     background: none;
     border: 0;
     padding: 0;
-    color: inherit;
+    color: #ffffff;
     font: inherit;
     font-size: 13px;
     cursor: pointer;
@@ -441,11 +472,23 @@
   }
 
   .entry:hover {
-    background-color: #2f2f2f;
+    background-color: #383838;
   }
 
+  /*
+   * The open file is named in the accent — the same `--color-primary-500` the
+   * title bar uses for "dPASP Playground", so the one pink thing on screen is
+   * always "where you are". The icon follows, since `Icon.svelte` draws in
+   * `currentColor`.
+   *
+   * The row is *recessed* rather than lightened, which is the less obvious
+   * half. Selection used to be a lighter #3a3a3a, and the accent on that
+   * measures 4.39:1 — under the 4.5:1 AA floor for 13 px text. Darkening the
+   * row instead of lightening it takes the same colour to 5.84:1, so the
+   * selected file is the most readable line in the list rather than the least.
+   */
   .entry.current {
-    background-color: #3a3a3a;
-    color: #ffffff;
+    background-color: #262626;
+    color: var(--color-primary-500);
   }
 </style>

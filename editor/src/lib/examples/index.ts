@@ -11,7 +11,9 @@ import earthquake from './earthquake.pasp?raw';
 import coloring from './coloring.pasp?raw';
 import insomnia from './insomnia.pasp?raw';
 import prisoners from './prisoners.pasp?raw';
+import argumentation from './argumentation.pasp?raw';
 import learning from './learning.pasp?raw';
+import poisson from './poisson.pasp?raw';
 import digitsum from './digitsum.pasp?raw';
 
 export interface Example {
@@ -65,6 +67,14 @@ export const EXAMPLES: Example[] = [
     code: prisoners
   },
   {
+    id: 'argumentation',
+    label: 'Argumentation — attack and support',
+    filename: 'argumentation.pasp',
+    description:
+      'Probabilistic arguments that attack and support one another: an argument holds when something positive supports it and nothing negative defeats it. Both halves of the semantics are declared, one directive each. Example 6 of Totis, De Raedt & Kimmig (2023); Example 11 of Geh et al. (2024).',
+    code: argumentation
+  },
+  {
     id: 'learning',
     label: 'Parameter learning from a CSV',
     filename: 'learning.pasp',
@@ -73,6 +83,14 @@ export const EXAMPLES: Example[] = [
     note:
       'As written it reads the CSV from a URL, which happens while the program is parsed \u2014 so it needs outbound network from the runner. The comments in the program explain how to upload your own copy instead, which is the more reliable route. Takes roughly 15 seconds.',
     code: learning
+  },
+  {
+    id: 'poisson',
+    label: 'Poisson disasters — a PyTorch distribution',
+    filename: 'poisson.pasp',
+    description:
+      'PyTorch inside a program: a `#python` block defines a Poisson module with a learnable rate, and a neural annotated disjunction `!::event(X) as @Poisson` turns its output into the probability of an event. Shows how a torch model supplies probabilities that ordinary rules then reason over. Examples 5 and 6 of Geh et al. (2024).',
+    code: poisson
   },
   {
     id: 'digitsum',

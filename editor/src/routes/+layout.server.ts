@@ -11,7 +11,7 @@ export const load: LayoutServerLoad = async (event) => {
   );
 
   return {
-    session: await event.locals.getSession(),
+    session: await event.locals.auth(),
     authEnabled
   };
 };
