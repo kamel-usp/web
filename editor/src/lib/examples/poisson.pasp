@@ -1,0 +1,28 @@
+% Examples 5 and 6 in Geh et al. dPASP: A Probabilistic Logic Programming Environment For Neurosymbolic
+% Learning and Reasoning. In: Proceedings of the 21st International Conference on Principles of 
+% Knowledge Representation and Reasoning, 2024.
+#python
+import torch as t
+class Poisson(t.nn.Module):
+  def __init__(self):
+    super().__init__()
+    self.l = t.nn.Parameter(t.tensor([1.0]))
+    self.p = t.distributions.poisson.Poisson(self.l)
+  def forward(self,x):
+    return t.exp(self.p.log_prob(x))
+def get_data(year):
+    data = {2020: 0., 2021: 2., 2022: 4.}
+    return [[data[year]]]
+#end.
+input(2020) ~ test(@get_data(2020)).
+input(2021) ~ test(@get_data(2021)).
+input(2022) ~ test(@get_data(2022)).
+!::event(X) as @Poisson :- input(X).
+0.2::counter_measures.
+disaster :- event(2021), not counter_measures.
+joint :- event(Y1), event(Y2), event(Y3), Y2 = Y1 + 1, Y3 = Y2 + 1.
+
+#semantics maxent.
+
+#query disaster. % P(disaster) ≈ 0.147
+#query joint. % P(joint) ≈ 0.001

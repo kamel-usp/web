@@ -1,0 +1,59 @@
+/*
+ * Global styles. Tailwind 4, which is configured here rather than in a
+ * `tailwind.config.cjs`: one `@import`, and a `@theme` block for anything
+ * this app adds to the default scale. The content scan is automatic, so the
+ * `content: [...]` array is gone too.
+ *
+ * This file used to be `app.postcss` and started with the three `@tailwind`
+ * directives. Those were removed in Tailwind 4.
+ */
+@import "tailwindcss";
+
+/*
+ * Dark mode is applied by a class, not by the OS preference. Tailwind 4 has
+ * no `darkMode: 'class'` option — the variant is redefined here instead, and
+ * this is the exact replacement the Tailwind upgrade guide gives.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * The accent. It was added for flowbite, which expected a `primary` scale;
+ * that dependency is gone, but the colour is the playground's, so it stays
+ * and is now a first-class theme token — `text-primary-500` and friends
+ * still work, and so does `var(--color-primary-500)` in plain CSS.
+ */
+@theme {
+  --color-primary-50: #fff5f2;
+  --color-primary-100: #fff1ee;
+  --color-primary-200: #ffe4de;
+  --color-primary-300: #ffd5cc;
+  --color-primary-400: #ffbcad;
+  --color-primary-500: #fe795d;
+  --color-primary-600: #ef562f;
+  --color-primary-700: #eb4f27;
+  --color-primary-800: #cc4522;
+  --color-primary-900: #a5371b;
+}
+
+:root {
+  /*
+   * The fixed title bar's height, and the page's top padding. These have to
+   * agree: the bar is `position: fixed`, so the workspace under it would
+   * otherwise start six pixels too high and lose the top of the toolbar —
+   * which is exactly what happened when the bar stopped being flowbite's and
+   * grew by its own padding. One token, two users.
+   */
+  --nav-height: 48px;
+}
+
+body {
+  background-color: #2e2e2e;
+}
+
+#console {
+  background-color: #1a1a1a;
+}
+
+#output {
+  background-color: #2e2e2e;
+}

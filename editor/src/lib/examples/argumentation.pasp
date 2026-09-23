@@ -1,0 +1,19 @@
+% Example 6 in (Totis, De Raedt, and Kimmig, 2023)
+% and Example 11 in (Geh et al., 2024)
+0.4::base(a1). 0.8::base(a2). 0.3::base(a3).
+0.7::base(a4). 0.6::base(a5). 0.7::base(a6).
+pos(A) :- base(A).
+0.6::neg(a6) :- arg(a1). 0.3::neg(a1) :- arg(a4).
+0.8::neg(a1) :- arg(a2). 0.7::neg(a2) :- arg(a1).
+0.6::pos(a4) :- arg(a5). 
+0.5::pos(a1) :- arg(a3).
+arg(A) :- pos(A), not neg(A).
+#semantics maxent.
+#semantics stable.
+% Uncomment the following line to get a faster approximate estimate.
+% #inference aseo, nmodels=2048.
+#query arg(a1).
+#query arg(a2).
+#query arg(a3).
+#query arg(a4).
+#query arg(a5).
