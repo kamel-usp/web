@@ -99,7 +99,7 @@ export const EXAMPLES: Example[] = [
     description:
       'Neuro-symbolic learning: a convolutional network classifies MNIST digits while the logic program constrains their sum. Shows #python blocks, neural rules and #learn.',
     note:
-      'This one downloads the MNIST dataset and trains a network. The per-run limit is 5 minutes, which the first run will probably exceed because it has to fetch MNIST; if it reports a timeout, raise DPASP_RUN_TIMEOUT (in a .env file next to compose.yaml) and try again.',
+      'The heaviest example here: it trains on all 60000 MNIST images, which takes about 45 seconds. Nothing is downloaded — MNIST is cached in the runner image. The test set is cut to 10 images, which the program pairs into 5 addition problems, and #query sum(X) asks the 19 possible sums of each, so the table has 95 rows. The program’s comments say how to change that.',
     code: digitsum
   }
 ];

@@ -14,10 +14,12 @@ Result shape
       "psem": "credal" | "maxent",
       "interval": bool,          # true when bounds are lower/upper pairs
       "learned": bool,           # true when the program had a #learn directive
+      "instances": int,          # blocks of answers (see below); 0 on failure
+      "instances_shown": int,    # how many of them "queries" holds
       "elapsed_ms": int,
       "queries": [
         {"query": "P(alarm | burglary)", "values": [0.9, 0.9],
-         "lower": 0.9, "upper": 0.9}
+         "lower": 0.9, "upper": 0.9, "instance": 0}
       ],
       "output": str,             # what the program itself printed
       "error": null | {"kind": "parse"|"runtime"|"timeout"|"internal",
@@ -27,6 +29,12 @@ Result shape
 
 Non-finite bounds are serialised as the strings "inf", "-inf" and "nan", since
 JSON has no literals for them.
+
+A program with neural rules answers every query once per row of its test data,
+so `queries` then holds `instances` blocks of one entry per `#query`, each
+entry tagged with its `instance` index. Ordinary programs have a single block
+and no `instance` key. `instances_shown` is smaller than `instances` when the
+test set was larger than `runner_worker.MAX_RESULT_INSTANCES`.
 """
 
 import json
@@ -149,6 +157,8 @@ def mock_result(code: str) -> dict:
         "psem": psem,
         "interval": interval,
         "learned": False,
+        "instances": 1 if entries else 0,
+        "instances_shown": 1 if entries else 0,
         "elapsed_ms": 0,
         "queries": entries,
         "output": "MOCK mode: probabilities are random numbers.",
@@ -234,6 +244,8 @@ def run_program(code: str, cwd: str = None) -> dict:
             "psem": psem,
             "interval": psem == "credal",
             "learned": False,
+            "instances": 0,
+            "instances_shown": 0,
             "elapsed_ms": int(RUN_TIMEOUT_S * 1000),
             "queries": [],
             "output": output,
@@ -268,6 +280,8 @@ def run_program(code: str, cwd: str = None) -> dict:
             "psem": psem,
             "interval": psem == "credal",
             "learned": False,
+            "instances": 0,
+            "instances_shown": 0,
             "elapsed_ms": 0,
             "queries": [],
             "output": output,
@@ -278,6 +292,8 @@ def run_program(code: str, cwd: str = None) -> dict:
     result.setdefault("queries", [])
     result.setdefault("interval", psem == "credal")
     result.setdefault("learned", False)
+    result.setdefault("instances", 1 if result["queries"] else 0)
+    result.setdefault("instances_shown", result["instances"])
     result.setdefault("error", None)
     result["output"] = output
     return result

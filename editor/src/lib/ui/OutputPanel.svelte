@@ -36,6 +36,16 @@
 
   const result = $derived($runResult);
   const queryCount = $derived(result ? result.queries.length : 0);
+
+  /**
+   * A program with neural rules answers every `#query` once per row of its
+   * test data, so the runner returns one block of answers per row and tags
+   * each entry with its `instance`. Ordinary programs have a single block and
+   * no tag, and then the column is not shown at all.
+   */
+  const instances = $derived(result?.instances ?? 1);
+  const shown = $derived(result?.instances_shown ?? instances);
+  const perInstance = $derived(instances > 1);
   const hasOutput = $derived(!!(result && result.output));
   const hasError = $derived(!!(result && result.error));
 
@@ -108,9 +118,20 @@
           to show.
         </p>
       {:else}
+        {#if perInstance}
+          <p class="notice">
+            This program has neural rules, so every query is answered once per row of test data.
+            {#if shown < instances}
+              Showing the first {shown} of {instances} rows.
+            {:else}
+              {instances} rows.
+            {/if}
+          </p>
+        {/if}
         <table>
           <thead>
             <tr>
+              {#if perInstance}<th class="inst">Row</th>{/if}
               <th class="q">Query</th>
               {#if result.interval}
                 <th class="num">Lower</th>
@@ -122,8 +143,9 @@
             </tr>
           </thead>
           <tbody>
-            {#each result.queries as q}
-              <tr>
+            {#each result.queries as q, i}
+              <tr class:group-start={perInstance && q.instance !== result.queries[i - 1]?.instance}>
+                {#if perInstance}<td class="inst">{(q.instance ?? 0) + 1}</td>{/if}
                 <td class="q"><code>{q.query}</code></td>
                 {#if result.interval}
                   <td class="num">{formatBound(q.lower)}</td>
@@ -331,6 +353,21 @@
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+  }
+
+  th.inst,
+  td.inst {
+    width: 1%;
+    padding-right: 4px;
+    text-align: right;
+    color: #8a8a8a;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* A hairline between test-instance blocks, so a long table reads as groups
+     of queries rather than one undifferentiated list. */
+  tbody tr.group-start:not(:first-child) td {
+    border-top: 1px solid #3a3a3a;
   }
 
   td.q code {

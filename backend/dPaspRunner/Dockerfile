@@ -94,8 +94,13 @@ FROM base AS dpasp
 # shared object that exports the full clingo C API, and it publishes aarch64
 # wheels. So clingo arrives as a Python package and is then presented to the
 # compiler as an ordinary library. No apt repository is involved.
+#
+# `curl` and `ca-certificates` are for the MNIST cache further down; neither
+# is in the base image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
+      ca-certificates \
+      curl \
       libncurses-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -162,6 +167,53 @@ RUN python3 -c "import pasp; P = pasp.parse('0.5::a. #query(a)', from_str=True);
 COPY requirements.txt ./
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
+# MNIST, cached in the image, for `digitsum.pasp`.
+#
+# The published program calls `torchvision.datasets.MNIST(root = "/tmp",
+# download = True)`, and neither half of that can work in a runner:
+#
+#   * torchvision is not installed. It would add another large wheel (and a
+#     torch version constraint) to fetch four files of data.
+#   * A runner container has **no route off the host** — `dpasp-instances` is
+#     an internal network and `DPASP_RUNNER_ALLOW_NETWORK` is 0 by default —
+#     so the download does not fail informatively, it hangs and then errors.
+#     The root filesystem is read-only besides, so `root = "/tmp"` would have
+#     to be the tmpfs, and every user would pay for the download again.
+#
+# 11.5 MB, fetched once here instead. The mirror is the one torchvision uses
+# and the checksums are torchvision's own (`torchvision/datasets/mnist.py`),
+# so a truncated, substituted or redirected download fails the build rather
+# than training a network on rubbish. `--fail` matters: without it curl writes
+# an HTTP error page into the file and exits 0.
+#
+# The example reads these with `gzip` and `struct`; see its comments.
+#
+# Two mirrors, tried in order, because neither is under anyone's control here
+# and a build that cannot fetch MNIST cannot produce a runner at all. The
+# checksum below is what makes a second source safe to accept: whichever one
+# answers, the bytes have to be the same bytes. Override either with
+# `--build-arg` if both are blocked on your network.
+ARG MNIST_URL=https://ossci-datasets.s3.amazonaws.com/mnist
+ARG MNIST_URL_FALLBACK=https://storage.googleapis.com/cvdf-datasets/mnist
+RUN mkdir -p /opt/mnist && cd /opt/mnist \
+ && for f in train-images-idx3-ubyte.gz train-labels-idx1-ubyte.gz \
+             t10k-images-idx3-ubyte.gz t10k-labels-idx1-ubyte.gz; do \
+      curl --fail --silent --show-error --location --retry 3 \
+           --output "$f" "$MNIST_URL/$f" \
+      || { echo "$MNIST_URL/$f failed; trying $MNIST_URL_FALLBACK" >&2; \
+           curl --fail --silent --show-error --location --retry 3 \
+                --output "$f" "$MNIST_URL_FALLBACK/$f"; } \
+      || exit 1; \
+    done \
+ && printf '%s\n' \
+      'f68b3c2dcbeaaa9fbdd348bbdeb94873  train-images-idx3-ubyte.gz' \
+      'd53e105ee54ea40749a09fcbcd1e9432  train-labels-idx1-ubyte.gz' \
+      '9fb629c4189551a2d022fa330f9573f3  t10k-images-idx3-ubyte.gz' \
+      'ec29112dd5afa0611ce80d1b7f02629c  t10k-labels-idx1-ubyte.gz' \
+      > MD5SUMS \
+ && md5sum --check --strict MD5SUMS \
+ && chmod -R a+rX /opt/mnist
+
 # See the mock stage: ownership matters only when no tmpfs is mounted over it.
 RUN mkdir /blobs && chown runner:runner /blobs
 
@@ -190,6 +242,17 @@ RUN chmod -R a+rX /app
 RUN su -s /bin/sh runner -c 'cat /app/main.py > /dev/null' \
  || { echo "The runner user cannot read /app — check the chmod above." >&2; \
       ls -la /app >&2; exit 1; }
+
+# The same for the MNIST cache — readable as `runner`, and decodable into the
+# arrays `digitsum.pasp` expects. The checksums above say the bytes arrived
+# intact; this says they are the dataset the example thinks they are, and that
+# the account which will read them can. A wrong path or a mode bit becomes a
+# build failure rather than a `#python` traceback in someone's output panel.
+RUN for f in /opt/mnist/*.gz; do \
+      su -s /bin/sh runner -c "cat $f > /dev/null" \
+      || { echo "The runner user cannot read $f." >&2; ls -la /opt/mnist >&2; exit 1; }; \
+    done \
+ && python3 -c "import gzip, numpy; head = lambda n, s: numpy.frombuffer(gzip.open('/opt/mnist/' + n, 'rb').read()[s:], dtype=numpy.uint8); labels = head('t10k-labels-idx1-ubyte.gz', 8); sizes = (labels.size, head('t10k-images-idx3-ubyte.gz', 16).size, head('train-images-idx3-ubyte.gz', 16).size); assert sizes == (10000, 10000 * 784, 60000 * 784), sizes; assert labels[:10].tolist() == [7, 2, 1, 0, 4, 1, 4, 9, 5, 9], labels[:10]; print('MNIST cache check passed:', sizes)"
 
 ENV MOCK=n
 

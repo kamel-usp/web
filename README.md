@@ -613,6 +613,8 @@ panel like any other outcome.
   "psem": "credal",
   "interval": true,
   "learned": false,
+  "instances": 1,
+  "instances_shown": 1,
   "elapsed_ms": 218,
   "queries": [
     { "query": "ℙ(alarm | burglary)", "values": [0.9, 0.9],
@@ -625,6 +627,12 @@ panel like any other outcome.
 
 - `interval` is true under the credal semantics, where each query yields
   `[lower, upper]`, and false under max-entropy, where it yields one value.
+- `instances` is 1 for an ordinary program. A program with neural rules
+  answers every query **once per row of its test data**, and then `queries`
+  holds that many blocks of one entry per `#query`, each entry tagged with
+  its 0-based `instance`. `instances_shown` is smaller than `instances` when
+  the test set exceeded `DPASP_MAX_RESULT_INSTANCES` (50). See "The extra
+  dimension a neural program adds" below.
 - `sem` and `psem` are **reported, not requested**. The request body is just
   `{code}`: dPASP decides the semantics from the program's own `#semantics`
   directive, and the runner reads both halves back off the parsed program —
@@ -637,6 +645,60 @@ panel like any other outcome.
   its import-time notices are stripped.
 - `error.kind` is one of `parse`, `runtime`, `timeout`, `internal`. Parse
   errors carry `line` and `column`.
+
+### The extra dimension a neural program adds
+
+dPASP's result array does not have one shape. In `exact.c`, just before the
+`PyArray_SimpleNewFromData` call:
+
+```c
+if (has_neural) { nd = 3; dims[0] = p.m_test; dims[1] = p.Q_n; dims[2] = ...; }
+else            { nd = 2; dims[0] = p.Q_n;    dims[1] = ...; }
+```
+
+So an ordinary program returns `(n_queries, n_values)` and a program with
+neural rules or neural annotated disjunctions returns
+`(n_test_instances, n_queries, n_values)`, where the last dimension is 2 under
+credal semantics and 1 under max-entropy. `m_test` is the number of rows the
+`test(...)` data carries, and dPASP prints one block of answers per row,
+separated by `---`.
+
+The runner used to read every result as the 2-D shape, and that is a quiet,
+plausible kind of wrong: iterating a 3-D array yields *blocks*, not rows, so
+`poisson.pasp` — which asks two queries and gets one probability for each —
+came back as **one** query holding two values, and the panel showed
+
+    ℙ(disaster) = [0.147152, 0.001037]
+
+with the second query's probability presented as the first query's upper
+bound. Nothing errored; the numbers were even right. Only their labels were
+wrong, which is the failure mode that survives a smoke test.
+
+`runner_worker.as_instances` now normalises both shapes to a list of blocks,
+`array_depth` reads `ndim` when there is one and falls back to counting
+nesting (so the shaping can be tested with plain lists), `interval` is read
+off a **query row** rather than the outermost dimension, and entries carry
+an `instance` index only when there is more than one block.
+
+Two consequences worth knowing:
+
+- Adding a `#query` to a neural program adds a row to every block, not a
+  block. Adding a row of test data adds a block.
+- A real test set is large, so the payload is capped at
+  `DPASP_MAX_RESULT_INSTANCES` blocks (50) and the response says how many
+  there were. dPASP's own printer stops far sooner — `cexact.c` sets
+  `quiet = quiet || (data_stride > 10)`.
+
+Verified against real dPASP with PyTorch, not against a fixture: `poisson.pasp`
+reports ℙ(disaster) = 0.147152 and ℙ(joint) = 0.001037 as two entries with one
+value each; the same program with three rows of test data reports six entries
+across three blocks whose probabilities fall as the Poisson counts grow; the
+same again without `#semantics maxent.` reports bounds; and the truncation cap
+was checked by setting `DPASP_MAX_RESULT_INSTANCES=2` against a five-row run.
+In Chromium, against the production bundle and a real runner, the panel shows
+`Query | Probability` for the one-block case and `Row | Query | Probability`
+with a hairline between blocks for the three-block case, and `insomnia.pasp`
+still shows `Query | Lower | Upper`.
 
 ### Why the runner forks a process
 
@@ -654,7 +716,8 @@ FastAPI worker. Three reasons:
 3. A segfault in the C extension takes down only the child.
 
 Tunable through the environment: `DPASP_RUN_TIMEOUT` (default 300 s),
-`DPASP_RUN_MEM_MB` (default 1024), `DPASP_MAX_OUTPUT` (default 65536 chars).
+`DPASP_RUN_MEM_MB` (default 1024), `DPASP_MAX_OUTPUT` (default 65536 chars),
+`DPASP_MAX_RESULT_INSTANCES` (default 50).
 These sit inside the runner container and complement, not replace, whatever
 CPU and memory limits the container itself is given.
 
@@ -773,11 +836,11 @@ To let programs reach the internet again:
 DPASP_RUNNER_ALLOW_NETWORK=1
 ```
 
-The manager then also attaches the default bridge to each runner. Two of the
-shipped examples need it: `digitsum.pasp` downloads MNIST, and
-`learning.pasp` reads its CSV from a URL. Uploading the CSV and referring to
-it by name works either way, which is why the example's comments recommend
-it.
+The manager then also attaches the default bridge to each runner. One shipped
+example still needs it: `learning.pasp` reads its CSV from a URL. Uploading
+the CSV and referring to it by name works either way, which is why the
+example's comments recommend it. (`digitsum.pasp` used to need it too; MNIST
+is cached in the runner image now — see *The MNIST cache* below.)
 
 ### Not root
 
@@ -1093,15 +1156,16 @@ programs, so a newcomer can run something real without typing it first:
 | `argumentation.pasp` | probabilistic rules that attack and support each other, with the two halves of the semantics declared one directive each |
 | `learning.pasp` | learnable facts (`?::`) fitted to a CSV with `#learn` |
 | `poisson.pasp` | a **PyTorch** module supplying probabilities: a `#python` block and a neural annotated disjunction, `!::event(X) as @Poisson` |
-| `digitsum.pasp` | `#python` blocks, neural rules and `#learn` |
+| `digitsum.pasp` | `#python` blocks, neural rules and `#learn`, on MNIST |
 
 The sources live in `editor/src/lib/examples/` as ordinary `.pasp` files and
 are pulled in with Vite's `?raw`, rather than pasted into a TypeScript
-literal. That keeps them readable and editable. All but `learning.pasp` are
-currently byte-identical to their counterparts in the dPASP repository's own
-`examples/` directory — `coloring.pasp` is `3coloring.plp` and
-`digitsum.pasp` is `add_mnist.plp`, renamed only to match what the dialog
-calls them. Diff them against upstream when dPASP changes. `learning.pasp`
+literal. That keeps them readable and editable. All but `learning.pasp` and
+`digitsum.pasp` are currently byte-identical to their counterparts in the
+dPASP repository's own `examples/` directory — `coloring.pasp` is
+`3coloring.plp`, renamed only to match what the dialog calls them. Diff them
+against upstream when dPASP changes. `digitsum.pasp` is `add_mnist.plp` with
+its data loading changed (see below); `learning.pasp`
 comes from the [parameter-learning
 tutorial](https://kamel-usp.github.io/pages/learn_dpasp.html#learning-the-parameters-of-programs)
 and carries added comments.
@@ -1122,8 +1186,68 @@ dialog when selected, rather than being left to look broken:
   with the uploaded-files folder as their working directory. That is also
   what will keep working once the runner is network-isolated (see *Known
   gaps*).
-* `digitsum.pasp` downloads MNIST and trains a network, so the first run may
-  exceed even the 5-minute limit while it fetches MNIST.
+* `digitsum.pasp` trains a convolutional network on all 60000 MNIST images.
+  That takes about 45 seconds on one CPU — comfortably inside the 5-minute
+  deadline, but long enough that the dialog should say so. It also returns 95
+  rows, for the reason in *The MNIST cache*.
+
+### The MNIST cache
+
+`digitsum.pasp` is the one example whose data does not fit in the file. As
+published it calls
+
+```python
+torchvision.datasets.MNIST(root = "/tmp", train = True, download = True)
+```
+
+and neither half of that can work in a runner:
+
+- **torchvision is not installed.** It is a large wheel with its own torch
+  version constraint, brought in to fetch four files and decode a format that
+  `gzip` and `struct` handle in eight lines.
+- **A runner has no route off the host.** `dpasp-instances` is internal and
+  `DPASP_RUNNER_ALLOW_NETWORK` is 0 by default, so the download does not fail
+  quickly or informatively. The root filesystem is read-only besides, so
+  `root = "/tmp"` would land on the tmpfs and every user would pay for the
+  download again, inside their own 5-minute deadline.
+
+So the runner image carries MNIST. The `dpasp` stage fetches the four IDX
+files (11.5 MB gzipped) into `/opt/mnist`, from torchvision's own mirror with
+a fallback to the CVDF one, and verifies them against **torchvision's
+published MD5s**; a truncated, substituted or redirected download fails the
+build rather than training a network on rubbish. `curl --fail` matters here
+for the same reason it always does — without it curl writes the HTTP error
+page into the file and exits 0. The build then reads every file as `runner`
+and decodes one, so a mode bit or a wrong path is a build failure and not a
+`#python` traceback in a visitor's output panel.
+
+The example reads them with `read_idx`, a `numpy.frombuffer` over the
+decompressed bytes, and its comments say all of the above.
+
+**The test set is cut to ten images.** The program pairs the two halves of the
+test set, so ten images are five addition problems, and a neural program is
+answered once per test row — `#query sum(X)` grounds to the 19 possible sums,
+so the panel shows 5 blocks of 19. The full 10000-image test set would ask for
+5000 blocks, which is 95000 probabilities: past the result cap, past the
+deadline, and unreadable. `N_TEST_IMAGES` at the top of the `#python` block is
+the knob, and the comments point at it.
+
+**Training is not reduced** — all 60000 images, five iterations, `batch = 1000`,
+exactly as published. It was worth measuring rather than assuming: that is
+**43 seconds pinned to a single CPU**, so the README's old claim that training
+exceeds the run limit was simply wrong. What made the example unrunnable was
+the download, not the learning.
+
+Measured end to end through the production bundle and a real runner: 36 s, 95
+rows, five blocks peaking at `sum(8)`, `sum(6)`, `sum(10)`, `sum(5)` and
+`sum(13)` — the digits are 7+1, 2+4, 1+9, 0+5, 4+9. Training is stochastic, so
+four of five is a normal result too.
+
+Four properties are pinned by `test_dockerfile.py`, which needs no daemon:
+every file is fetched, every file is checksummed with `--fail` on the fetch,
+the build checks readability as `runner`, and the example and the Dockerfile
+agree on `/opt/mnist`. Each was mutation-checked — removing any one fails
+exactly one test, by name.
 
 **Every example source must end with a newline**, and a test enforces it.
 That is not tidiness: dPASP's parser needs the newline to close a `%`
@@ -1154,7 +1278,7 @@ named. It used to overwrite silently.
 ## Tests
 
 ```bash
-cd web/editor && npm test              # 94 tests: tokenizer, examples, limits,
+cd web/editor && npm test              # 96 tests: tokenizer, examples, limits,
                                        #     runner URL, download, runnerFetch,
                                        #     file icons
 cd web/editor && npm run check         # svelte-check: 0 errors, 0 warnings
@@ -1167,8 +1291,9 @@ cd web/backend/containerManager && python3 -m pytest  # 59: queue, lifecycle, li
                                                       #     liveness, network choice
 cd web/backend/dockerProxy && python3 -m pytest       # 51: the socket policy, and the
                                                       #     real manager driving it
-cd web/backend/dPaspRunner && python3 -m pytest       # 45: result format, limits,
-                                                      #     blob endpoints
+cd web/backend/dPaspRunner && python3 -m pytest       # 61: result format, limits,
+                                                      #     blob endpoints, the
+                                                      #     Dockerfile, MNIST cache
 ```
 
 The runner tests that need dPASP skip themselves when it is not importable,
@@ -1394,9 +1519,19 @@ screenshot is not noise because you can explain it.
   lifetime. They are at least removed rather than left stopped now, and
   leftovers are swept at startup, but nothing enforces the lifetime while the
   manager runs.
-- **Learning is untested here.** A `#learn` program is dispatched correctly
-  (`Program.__call__` handles it) but needs PyTorch and uploaded data; the
-  result format reports it only through the `learned` flag.
+- **Neural learning has no progress feedback.** `digitsum.pasp` trains for
+  about 45 seconds and the panel shows only "running…" throughout. dPASP
+  prints a learning bar, which the runner deliberately strips (it is
+  per-line, not per-frame, so it would otherwise fill the output pane), but
+  nothing takes its place. This is the clearest case for the submit-then-poll
+  `/run` in *Next up*.
+- **A neural program's test rows are shown as a flat table.** Every query is
+  answered once per row and the rows are numbered in a `Row` column, which is
+  honest but does not scale: at 50 rows (the cap) that is 50 blocks of
+  identical query names to scroll through. Selecting a row, or charting one
+  query across rows, would be the useful version. `digitsum.pasp` now runs and
+  shows exactly this: 95 rows, of which the five that matter are the peak of
+  each block.
 - **CSV files are uploaded but not otherwise interpreted.** They land in the
   runner's blob folder, which is the working directory for a run, so a
   `#learn` directive or a `#python` block can open one by its bare name.

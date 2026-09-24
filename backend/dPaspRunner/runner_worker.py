@@ -34,6 +34,13 @@ DEFAULT_STACK_LIMIT_MB = 64
 #: import-time notices) rather than output from the user's program.
 OUTPUT_MARKER = "\x1e--dpasp-runner-ready--\x1e"
 
+#: How many test instances' answers are sent to the browser at most. A neural
+#: program answers every query once per row of test data, so a test set of any
+#: realistic size would otherwise produce tens of thousands of table rows that
+#: nobody can read. dPASP's own printer gives up sooner still — `cexact.c` has
+#: `quiet = quiet || (data_stride > 10)`.
+MAX_RESULT_INSTANCES = int(os.getenv("DPASP_MAX_RESULT_INSTANCES", "50"))
+
 
 def apply_process_limits() -> None:
     """Disable core dumps and bound the stack.
@@ -144,6 +151,67 @@ def jsonable(x):
     return f
 
 
+def array_depth(value) -> int:
+    """Nesting depth of `value`, counting a numpy array's own dimensions.
+
+    Written so that the shaping below can be exercised with plain nested
+    lists, while still reading `ndim` when handed the real `numpy.ndarray`
+    dPASP returns.
+    """
+    depth = 0
+    while True:
+        ndim = getattr(value, "ndim", None)
+        if isinstance(ndim, int):
+            return depth + ndim
+        if isinstance(value, (list, tuple)):
+            depth += 1
+            if not value:
+                return depth
+            value = value[0]
+            continue
+        return depth
+
+
+def as_instances(answers) -> list:
+    """Normalise dPASP's result array to one answer block per test instance.
+
+    dPASP returns a *different shape* depending on whether the program has
+    neural rules or annotated disjunctions (`exact.c`, around the
+    `PyArray_SimpleNewFromData` call)::
+
+        plain   (n_queries, n_values)
+        neural  (n_test_instances, n_queries, n_values)
+
+    with `n_values` being 2 under credal semantics (lower and upper) and 1
+    under max-entropy. That extra leading dimension is what this function
+    exists for. Read as if it were the plain shape, a neural program's
+    per-query answers become the *values* of a single query: `poisson.pasp`
+    asks two queries and gets back ``[[[0.147152], [0.001037]]]``, which the
+    old code turned into one entry, ``ℙ(disaster) = [0.147152, 0.001037]`` —
+    the second query's probability presented as the first query's upper bound.
+
+    Returns a list of blocks, each a list of query rows, each a list of
+    numbers; empty when there is nothing to report.
+    """
+    if answers is None:
+        return []
+    try:
+        if len(answers) == 0:
+            return []
+    except TypeError:
+        return []
+    depth = array_depth(answers)
+    if depth >= 3:
+        return [[list(row) for row in block] for block in answers]
+    if depth == 2:
+        return [[list(row) for row in answers]]
+    if depth == 1:
+        # Not a shape dPASP currently produces; treated as one value per
+        # query rather than silently dropped.
+        return [[[value] for value in answers]]
+    return []
+
+
 def error_payload(kind: str, exc: BaseException) -> dict:
     """Build a structured error, with source coordinates when available.
 
@@ -246,20 +314,32 @@ def main() -> int:
     # appended to `program.Q`, so the query list is only complete afterwards.
     queries = [str(q) for q in program.Q]
 
-    rows = [] if answers is None else [list(row) for row in answers]
-    for i, row in enumerate(rows):
-        text = queries[i] if i < len(queries) else f"query {i + 1}"
-        values = [jsonable(v) for v in row]
-        entry = {"query": text, "values": values}
-        if len(values) >= 2:
-            entry["lower"], entry["upper"] = values[0], values[1]
-        elif values:
-            entry["lower"] = entry["upper"] = values[0]
-        result["queries"].append(entry)
+    instances = as_instances(answers)
+    shown = instances[:MAX_RESULT_INSTANCES]
+    result["instances"] = len(instances)
+    result["instances_shown"] = len(shown)
+
+    for index, block in enumerate(shown):
+        for i, row in enumerate(block):
+            text = queries[i] if i < len(queries) else f"query {i + 1}"
+            values = [jsonable(v) for v in row]
+            entry = {"query": text, "values": values}
+            if len(values) >= 2:
+                entry["lower"], entry["upper"] = values[0], values[1]
+            elif values:
+                entry["lower"] = entry["upper"] = values[0]
+            # Only when there is something to disambiguate: a plain program
+            # has exactly one block and its entries carry no index.
+            if len(instances) > 1:
+                entry["instance"] = index
+            result["queries"].append(entry)
 
     # Credal inference returns [lower, upper] per query, max-entropy a single
     # value. The frontend uses this to decide whether to show a bound column.
-    result["interval"] = bool(rows) and len(rows[0]) >= 2
+    # Read off one *query row*, not off the outermost dimension, which for a
+    # neural program counts test instances instead.
+    first_row = next((row for block in shown for row in block), None)
+    result["interval"] = first_row is not None and len(first_row) >= 2
     result["ok"] = True
     write_result(result_path, result, started)
     return 0

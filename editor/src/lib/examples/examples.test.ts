@@ -63,10 +63,11 @@ describe('the example programs', () => {
   );
 
   it('warns about exactly the programs that need more than a plain run', () => {
-    // digitsum trains on MNIST, so a plain run reports a timeout; learning
-    // reads its CSV over the network at parse time. The dialog says so up
-    // front rather than letting either look broken. Everything else runs as
-    // is, and a note on those would be noise.
+    // digitsum runs now, but it is the one example that takes the best part
+    // of a minute and returns 95 rows; learning reads its CSV over the
+    // network at parse time. The dialog says so up front rather than letting
+    // either look broken or hung. Everything else runs as is, and a note on
+    // those would be noise.
     const noted = EXAMPLES.filter((e) => e.note !== undefined).map((e) => e.id);
     expect(noted.sort()).toEqual(['digitsum', 'learning']);
     for (const id of noted) expect(findExample(id)?.note?.trim().length).toBeGreaterThan(20);
@@ -145,6 +146,37 @@ describe('the examples highlight cleanly', () => {
     expect(tokens.some(([t, v]) => t === 'keyword' && v === 'def')).toBe(true);
     // Back in pasp afterwards: the neural rule's external function.
     expect(tokens.some(([t, v]) => t === 'function' && v === '@digit_net')).toBe(true);
+  });
+
+  it('loads MNIST from the runner image rather than downloading it', () => {
+    // The published program calls torchvision.datasets.MNIST(download=True),
+    // which cannot work in a runner: torchvision is not installed and the
+    // container has no route off the host. Both halves of the replacement are
+    // pinned here, because losing either one turns the example back into a
+    // program that fails after a long wait.
+    const code = findExample('digitsum')!.code;
+    // Comments are excluded: they name torchvision on purpose, to say why it
+    // is not used. It is the executable half that must not reach for it.
+    const body = code
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('%'))
+      .join('\n');
+    expect(body).not.toContain('torchvision');
+    expect(body).toContain('/opt/mnist');
+    expect(body).toContain('train-images-idx3-ubyte.gz');
+  });
+
+  it('keeps the digitsum test set small enough to read', () => {
+    // 10 images make 5 addition problems, and dPASP answers all 19 possible
+    // sums for each, so the panel shows 95 rows. The full test set would ask
+    // for 5000 blocks. The comments promise a reader they can change this, so
+    // the knob has to stay a named constant rather than a literal slice.
+    const code = findExample('digitsum')!.code;
+    expect(code).toMatch(/N_TEST_IMAGES\s*=\s*10\b/);
+    expect(code).toContain('[:N_TEST_IMAGES]');
+    // Training is deliberately *not* reduced.
+    expect(code).toContain('niters = 5');
+    expect(code).not.toMatch(/train-images-idx3-ubyte\.gz"\)\[:/);
   });
 
   it('highlights the undef queries in the colouring program', () => {

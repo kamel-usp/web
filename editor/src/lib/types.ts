@@ -17,6 +17,12 @@ export interface QueryResult {
   values: Bound[];
   lower?: Bound;
   upper?: Bound;
+  /**
+   * 0-based test instance this answer belongs to, present only when the
+   * program had more than one. A program with neural rules answers every
+   * query once per row of its test data.
+   */
+  instance?: number;
 }
 
 export interface RunError {
@@ -38,6 +44,13 @@ export interface RunResult {
   interval: boolean;
   /** True when the program carried a `#learn` directive. */
   learned: boolean;
+  /**
+   * Blocks of answers the run produced: 1 for an ordinary program, one per
+   * row of test data for a program with neural rules.
+   */
+  instances?: number;
+  /** How many of those blocks `queries` holds; smaller when truncated. */
+  instances_shown?: number;
   elapsed_ms: number;
   queries: QueryResult[];
   /** Whatever the program itself printed. */

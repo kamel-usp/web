@@ -1,8 +1,37 @@
 % Addition of MNIST digits.
+%
+% Two things differ from the program as published, both so that it runs here.
+%
+% 1. MNIST is CACHED IN THE RUNNER IMAGE and loaded from disk. The published
+%    version calls torchvision.datasets.MNIST(root = "/tmp", download = True),
+%    which cannot work in this playground: torchvision is not installed, and a
+%    runner container has no route off the host (DPASP_RUNNER_ALLOW_NETWORK=0
+%    by default), so the download fails rather than the program running. The
+%    four IDX files are fetched once while the runner image is built, verified
+%    against the checksums torchvision itself publishes, and left in
+%    /opt/mnist. read_idx below decodes them with gzip and struct, which is
+%    all torchvision was doing for this program. Nothing is downloaded, and
+%    nothing is written to disk.
+%
+% 2. The TEST SET IS REDUCED to the first N_TEST_IMAGES = 10 of its 10000
+%    images. The program pairs the two halves of the test set, so 10 images
+%    make 5 addition problems, and dPASP answers every query once per problem:
+%    #query sum(X) grounds to the 19 possible sums, so the output panel shows
+%    5 blocks of 19 rows. The full test set would ask for 5000 blocks — 95000
+%    probabilities, past what the runner will return and well past what anyone
+%    can read. Raise N_TEST_IMAGES to see more.
+%
+% TRAINING IS UNCHANGED: all 60000 training images, five iterations, as
+% published. That takes about 45 seconds on one CPU, inside the runner's
+% 5-minute deadline.
+%
+% The five test problems are the digits 7+1, 2+4, 1+9, 0+5 and 4+9, so the
+% blocks should peak at sum(8), sum(6), sum(10), sum(5) and sum(13). A small
+% network trained for five iterations usually gets four or five of the five;
+% training is stochastic, so which one it misses changes between runs.
 
 #python
 import torch
-import torchvision
 
 class Net(torch.nn.Module):
   def __init__(self):
@@ -32,11 +61,26 @@ class Net(torch.nn.Module):
 
 def digit_net(): return Net()
 
+import gzip, struct, numpy
+
+MNIST_DIR = "/opt/mnist"
+N_TEST_IMAGES = 10
+
+def read_idx(name):
+  with gzip.open(MNIST_DIR + "/" + name, "rb") as f:
+    magic, = struct.unpack(">I", f.read(4))
+    ndim = magic & 0xFF
+    dims = struct.unpack(">" + "I" * ndim, f.read(4 * ndim))
+    return numpy.frombuffer(f.read(), dtype = numpy.uint8).reshape(dims).copy()
+
 def mnist_data():
-  train = torchvision.datasets.MNIST(root = "/tmp", train = True, download = True)
-  test  = torchvision.datasets.MNIST(root = "/tmp", train = False, download = True)
-  return train.data.float().reshape(len(train), 1, 28, 28)/255., train.targets, \
-         test.data.float().reshape(len(test), 1, 28, 28)/255., test.targets
+  train_X = read_idx("train-images-idx3-ubyte.gz")
+  train_Y = read_idx("train-labels-idx1-ubyte.gz")
+  test_X  = read_idx("t10k-images-idx3-ubyte.gz")[:N_TEST_IMAGES]
+  test_Y  = read_idx("t10k-labels-idx1-ubyte.gz")[:N_TEST_IMAGES]
+  images = lambda X: torch.from_numpy(X).float().reshape(len(X), 1, 28, 28)/255.
+  labels = lambda Y: torch.from_numpy(Y).long()
+  return images(train_X), labels(train_Y), images(test_X), labels(test_Y)
 
 def normalize(X_R, Y_R, X_T, Y_T, mu, sigma):
   return (X_R-mu)/sigma, Y_R, (X_T-mu)/sigma, Y_T

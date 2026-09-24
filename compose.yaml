@@ -17,8 +17,9 @@ x-runner-config: &runner-config
   DPASP_RUNNER_TMPFS_MB: ${DPASP_RUNNER_TMPFS_MB:-256}
   DPASP_RUNNER_READONLY: ${DPASP_RUNNER_READONLY:-1}
   # Off by default: runners sit on an internal network with no route out.
-  # Set to 1 to attach the default bridge as well, which the MNIST example
-  # and any `#learn` from a URL need.
+  # Set to 1 to attach the default bridge as well, which a `#learn` from a URL
+  # needs. The MNIST example does not: its dataset is cached in the runner
+  # image at /opt/mnist.
   DPASP_RUNNER_ALLOW_NETWORK: ${DPASP_RUNNER_ALLOW_NETWORK:-0}
 
 services:
@@ -296,10 +297,10 @@ networks:
   # on `cm` as well. A container with both keeps its default route and its
   # published ports on the non-internal one, so publishing 8000 is unaffected.
   #
-  # To let programs reach the internet again — the MNIST example downloads a
-  # dataset, and `learning.pasp` reads a CSV over https — set
-  # DPASP_RUNNER_ALLOW_NETWORK=1 rather than changing this: the manager then
-  # attaches the default bridge to each runner as well.
+  # To let programs reach the internet again — `learning.pasp` reads a CSV
+  # over https as shipped — set DPASP_RUNNER_ALLOW_NETWORK=1 rather than
+  # changing this: the manager then attaches the default bridge to each runner
+  # as well.
   dpasp-instances:
     driver: bridge
     internal: true
